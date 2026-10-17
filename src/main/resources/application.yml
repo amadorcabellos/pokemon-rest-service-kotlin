@@ -1,0 +1,86 @@
+spring:
+  application:
+    name: poke-rest-service
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/poke}
+    username: ${DB_USERNAME:poke}
+    password: ${DB_PASSWORD:poke}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  cache:
+    type: redis
+
+pokeapi:
+  base-url: ${POKEAPI_BASE_URL:https://pokeapi.co/api/v2}
+  connect-timeout: 5s
+  read-timeout: 10s
+
+app:
+  cache:
+    pokemon-ttl: ${POKEMON_CACHE_TTL:1h}
+
+resilience4j:
+  # Applied to PokeApiClient#fetchPokemon. Order: Retry -> CircuitBreaker -> RateLimiter -> HTTP call.
+  retry:
+    instances:
+      pokeapi:
+        max-attempts: 3
+        wait-duration: 500ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - com.ballastlane.poke.exception.PokeApiException
+        ignore-exceptions:
+          - com.ballastlane.poke.exception.PokemonNotFoundException
+  circuitbreaker:
+    instances:
+      pokeapi:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 5s
+        slow-call-rate-threshold: 80
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - com.ballastlane.poke.exception.PokeApiException
+        ignore-exceptions:
+          - com.ballastlane.poke.exception.PokemonNotFoundException
+  ratelimiter:
+    instances:
+      pokeapi:
+        limit-for-period: ${POKEAPI_RATE_LIMIT:20}
+        limit-refresh-period: 1s
+        timeout-duration: 500ms
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+  paths-to-match: /api/**
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,circuitbreakers,circuitbreakerevents,ratelimiters,retries
+  endpoint:
+    health:
+      probes:
+        enabled: true

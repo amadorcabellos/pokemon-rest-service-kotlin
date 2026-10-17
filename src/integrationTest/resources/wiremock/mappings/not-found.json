@@ -1,0 +1,5 @@
+{
+  "priority": 10,
+  "request": { "method": "GET", "urlPathPattern": "/api/v2/pokemon/.*" },
+  "response": { "status": 404, "body": "Not Found" }
+}

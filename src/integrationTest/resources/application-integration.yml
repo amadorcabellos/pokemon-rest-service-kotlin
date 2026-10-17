@@ -1,0 +1,18 @@
+# Overrides for API integration tests (activated with @ActiveProfiles("integration")).
+# Small windows and short waits keep resilience tests fast and deterministic.
+resilience4j:
+  retry:
+    instances:
+      pokeapi:
+        wait-duration: 10ms
+  circuitbreaker:
+    instances:
+      pokeapi:
+        sliding-window-size: 4
+        minimum-number-of-calls: 4
+        wait-duration-in-open-state: 1m
+        automatic-transition-from-open-to-half-open-enabled: false
+  ratelimiter:
+    instances:
+      pokeapi:
+        limit-for-period: 1000

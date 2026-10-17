@@ -1,0 +1,9 @@
+.git
+.gradle
+.idea
+build
+out
+*.iml
+.DS_Store
+src/test
+src/integrationTest

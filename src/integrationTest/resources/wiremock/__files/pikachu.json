@@ -1,0 +1,19 @@
+{
+  "id": 25,
+  "name": "pikachu",
+  "height": 4,
+  "weight": 60,
+  "base_experience": 112,
+  "order": 35,
+  "is_default": true,
+  "sprites": {
+    "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/25.png",
+    "back_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/back/25.png"
+  },
+  "types": [
+    {
+      "slot": 1,
+      "type": { "name": "electric", "url": "https://pokeapi.co/api/v2/type/13/" }
+    }
+  ]
+}

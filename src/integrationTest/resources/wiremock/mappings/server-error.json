@@ -1,0 +1,4 @@
+{
+  "request": { "method": "GET", "urlPath": "/api/v2/pokemon/glitch" },
+  "response": { "status": 503 }
+}

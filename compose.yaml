@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: poke
+      POSTGRES_USER: poke
+      POSTGRES_PASSWORD: poke
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U poke -d poke"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    image: poke-rest-service:latest
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/poke
+      DB_USERNAME: poke
+      DB_PASSWORD: poke
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      POKEAPI_BASE_URL: https://pokeapi.co/api/v2
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
