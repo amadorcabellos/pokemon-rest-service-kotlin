@@ -10,8 +10,10 @@ import com.ballastlane.poke.config.CatalogProperties;
 import com.ballastlane.poke.exception.PokeApiException;
 import com.ballastlane.poke.exception.PokemonNotFoundException;
 import com.ballastlane.poke.service.PokemonCatalogService;
-import com.ballastlane.poke.service.PokemonService;
-import com.ballastlane.poke.web.dto.PokemonResponse;
+import com.ballastlane.poke.service.PokemonDetailsService;
+import com.ballastlane.poke.web.dto.EvolutionStage;
+import com.ballastlane.poke.web.dto.PokemonDetails;
+import com.ballastlane.poke.web.dto.Stat;
 import com.ballastlane.poke.web.dto.PokemonSummary;
 import com.ballastlane.poke.web.dto.PokemonSummaryPage;
 import com.ballastlane.poke.web.dto.Skill;
@@ -34,8 +36,11 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(PokemonController.class)
 class PokemonControllerTest {
 
-	private static final PokemonResponse PIKACHU = new PokemonResponse(25, "pikachu", 4, 60, 112, "sprite.png",
-			List.of("electric"));
+	private static final PokemonDetails PIKACHU = new PokemonDetails(25, "pikachu", "artwork.png",
+			List.of(new Stat("hp", 35), new Stat("speed", 90)), 125, "It stores electricity.",
+			new EvolutionStage(172, "pichu", null, false, List.of(
+					new EvolutionStage(25, "pikachu", "friendship", true, List.of(
+							new EvolutionStage(26, "raichu", "use thunder-stone", false, List.of()))))));
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -45,7 +50,7 @@ class PokemonControllerTest {
 			List.of(new Skill("overgrow", false), new Skill("chlorophyll", true)));
 
 	@MockitoBean
-	private PokemonService pokemonService;
+	private PokemonDetailsService pokemonService;
 
 	@MockitoBean
 	private PokemonCatalogService pokemonCatalogService;
@@ -64,7 +69,16 @@ class PokemonControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.id").value(25))
 				.andExpect(jsonPath("$.name").value("pikachu"))
-				.andExpect(jsonPath("$.types[0]").value("electric"));
+				.andExpect(jsonPath("$.imageUrl").value("artwork.png"))
+				.andExpect(jsonPath("$.stats[0].name").value("hp"))
+				.andExpect(jsonPath("$.stats[0].value").value(35))
+				.andExpect(jsonPath("$.totalStats").value(125))
+				.andExpect(jsonPath("$.description").value("It stores electricity."))
+				.andExpect(jsonPath("$.evolution.name").value("pichu"))
+				.andExpect(jsonPath("$.evolution.evolvesVia").doesNotExist())
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].name").value("pikachu"))
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].current").value(true))
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].evolvesTo[0].evolvesVia").value("use thunder-stone"));
 	}
 
 	@Test

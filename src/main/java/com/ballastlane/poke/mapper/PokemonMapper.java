@@ -2,7 +2,6 @@ package com.ballastlane.poke.mapper;
 
 import com.ballastlane.poke.client.dto.PokeApiPokemon;
 import com.ballastlane.poke.domain.Pokemon;
-import com.ballastlane.poke.web.dto.PokemonResponse;
 import com.ballastlane.poke.web.dto.PokemonSummary;
 import com.ballastlane.poke.web.dto.Skill;
 import java.math.BigDecimal;
@@ -30,11 +29,6 @@ public class PokemonMapper {
 		BigDecimal massKg = BigDecimal.valueOf(source.weight()).movePointLeft(1);
 
 		return new PokemonSummary(source.id(), source.name(), spriteUrl(source), typeNames(source), massKg, skills);
-	}
-
-	public PokemonResponse toResponse(Pokemon pokemon) {
-		return new PokemonResponse(pokemon.getPokeApiId(), pokemon.getName(), pokemon.getHeight(),
-				pokemon.getWeight(), pokemon.getBaseExperience(), pokemon.getSpriteUrl(), pokemon.getTypes());
 	}
 
 	private static List<String> typeNames(PokeApiPokemon source) {

@@ -3,8 +3,8 @@ package com.ballastlane.poke.web;
 import com.ballastlane.poke.config.CatalogProperties;
 import com.ballastlane.poke.exception.InvalidPageRequestException;
 import com.ballastlane.poke.service.PokemonCatalogService;
-import com.ballastlane.poke.service.PokemonService;
-import com.ballastlane.poke.web.dto.PokemonResponse;
+import com.ballastlane.poke.service.PokemonDetailsService;
+import com.ballastlane.poke.web.dto.PokemonDetails;
 import com.ballastlane.poke.web.dto.PokemonSummaryPage;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -27,25 +27,26 @@ public class PokemonController {
 
 	private static final String PROBLEM_JSON = "application/problem+json";
 
-	private final PokemonService pokemonService;
+	private final PokemonDetailsService pokemonDetailsService;
 
 	private final PokemonCatalogService pokemonCatalogService;
 
 	private final CatalogProperties catalogProperties;
 
-	public PokemonController(PokemonService pokemonService, PokemonCatalogService pokemonCatalogService,
-			CatalogProperties catalogProperties) {
-		this.pokemonService = pokemonService;
+	public PokemonController(PokemonDetailsService pokemonDetailsService,
+			PokemonCatalogService pokemonCatalogService, CatalogProperties catalogProperties) {
+		this.pokemonDetailsService = pokemonDetailsService;
 		this.pokemonCatalogService = pokemonCatalogService;
 		this.catalogProperties = catalogProperties;
 	}
 
 	/**
-	 * Returns a pokemon by name or PokeAPI id, fetching it from PokeAPI on first access.
+	 * Returns the detailed view of a pokemon by name or PokeAPI id.
 	 */
-	@Operation(summary = "Get a pokemon by name or id",
-			description = "Served from the Redis cache or PostgreSQL when available; otherwise fetched from "
-					+ "PokeAPI, stored and cached.")
+	@Operation(summary = "Get pokemon details by name or id",
+			description = "Image (official artwork, or the default sprite), base stats, English Pokedex description "
+					+ "and evolution chain. Built from PokeAPI and cached in Redis; the basic pokemon is also "
+					+ "recorded in PostgreSQL on first lookup.")
 	@ApiResponse(responseCode = "200", description = "Pokemon found")
 	@ApiResponse(responseCode = "400", description = "Invalid name or id",
 			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
@@ -58,11 +59,11 @@ public class PokemonController {
 	@ApiResponse(responseCode = "503", description = "Circuit breaker open; PokeAPI calls are paused",
 			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
 	@GetMapping("/{nameOrId}")
-	public PokemonResponse getPokemon(
+	public PokemonDetails getPokemon(
 			@Parameter(description = "Pokemon name or PokeAPI id", example = "pikachu")
 			@PathVariable @Pattern(regexp = "^[a-zA-Z0-9-]{1,50}$",
 					message = "must be a pokemon name or numeric id") String nameOrId) {
-		return pokemonService.getPokemon(nameOrId);
+		return pokemonDetailsService.getPokemon(nameOrId);
 	}
 
 	/**

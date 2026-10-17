@@ -13,7 +13,7 @@ import org.springframework.test.context.TestPropertySource;
  * Uses its own context with a tiny, non-refreshing quota so the rate limiter can be tested deterministically.
  */
 @TestPropertySource(properties = {
-		"resilience4j.ratelimiter.instances.pokeapi.limit-for-period=2",
+		"resilience4j.ratelimiter.instances.pokeapi.limit-for-period=6",
 		"resilience4j.ratelimiter.instances.pokeapi.limit-refresh-period=1h",
 		"resilience4j.ratelimiter.instances.pokeapi.timeout-duration=0s" })
 class PokeApiRateLimiterIntegrationTest extends AbstractApiIntegrationTest {

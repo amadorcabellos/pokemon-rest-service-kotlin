@@ -1,7 +1,8 @@
 # pokemon-rest-service
 
-A Spring Boot REST API that serves Pokémon data from [PokeAPI](https://pokeapi.co). It stores results in
-**PostgreSQL** and caches them in **Redis**. You can also browse the full PokeAPI catalogue page by page,
+A Spring Boot REST API that serves Pokémon data from [PokeAPI](https://pokeapi.co). It caches responses in
+**Redis** and records looked-up Pokémon in **PostgreSQL**. You can look up a detailed view of one Pokémon
+(image, base stats, description and evolution chain), and browse the full PokeAPI catalogue page by page,
 with each entry's sprite, category, mass and skills. Calls to PokeAPI are protected by **Resilience4j** (retry,
 circuit breaker and rate limiter). The API is documented with **OpenAPI 3** and **Swagger UI**.
 
@@ -33,9 +34,7 @@ Built with Java 21, Spring Boot 4.1 and Gradle 9.
 
 The API has two read paths: looking up a single Pokémon, and browsing the catalogue.
 
-### Single Pokémon lookup
-
-The service reads data in this order: Redis cache, then PostgreSQL, then PokeAPI.
+### Pokémon details lookup
 
 ```
             GET /api/v1/pokemon/{nameOrId}
@@ -45,34 +44,35 @@ The service reads data in this order: Redis cache, then PostgreSQL, then PokeAPI
                │ PokemonController │  input validation, RFC 9457 errors
                └─────────┬─────────┘
                          ▼
-               ┌───────────────────┐   hit   ┌─────────┐
-               │  PokemonService   │ ◄────── │  Redis  │  @Cacheable("pokemon"), TTL 1h
-               └─────────┬─────────┘         └─────────┘
-                    miss │
-                         ▼
-               ┌───────────────────┐   hit   ┌────────────┐
-               │ PokemonRepository │ ◄────── │ PostgreSQL │  Flyway-managed schema
-               └─────────┬─────────┘         └────────────┘
-                    miss │
-                         ▼
-               ┌───────────────────┐
-               │   PokeApiClient   │  Resilience4j: Retry → CircuitBreaker → RateLimiter
-               └─────────┬─────────┘
-                         │ HTTP (RestClient + JDK HttpClient)
-                         ▼
-                    ┌──────────┐
-                    │ PokeAPI  │
-                    └──────────┘
+           ┌───────────────────────┐   hit   ┌─────────┐
+           │ PokemonDetailsService │ ◄────── │  Redis  │  "pokemon-details", key = trimmed, lowercased input
+           └───────────┬───────────┘         └─────────┘
+                  miss │
+                       ├─► PokeApiClient: /pokemon/{nameOrId}       image, stats, species link
+                       ├─► PostgreSQL: insert the basic Pokémon if it isn't stored yet
+                       ├─► PokeApiClient: /pokemon-species/{id}     description, evolution chain link
+                       ▼
+           ┌───────────────────────┐   hit   ┌─────────┐
+           │ EvolutionChainLoader  │ ◄────── │  Redis  │  "evolution-chain", key = chain id
+           └───────────┬───────────┘         └─────────┘
+                  miss │
+                       └─► PokeApiClient: /evolution-chain/{id}     (same resilience layer)
 ```
 
-1. A request first checks the Redis `pokemon` cache. The cache key is the input, trimmed and lowercased.
-2. On a cache miss, the service looks in PostgreSQL. Numeric input is matched against the PokeAPI id.
-   Any other input is matched against the name, ignoring case.
-3. If the Pokémon isn't stored yet, the service fetches it from PokeAPI, saves it, and returns it. The
-   response is then cached. The PokeAPI call goes through the [resilience](#resilience) layer.
+1. A request first checks the `pokemon-details` cache. The key is the input, trimmed and lowercased.
+2. On a miss, the service fetches the Pokémon from PokeAPI. The first time a Pokémon is seen, its basic data
+   (name, height, weight, base experience, sprite, types) is stored in PostgreSQL.
+3. It then fetches the Pokémon's **species**. The species, not the Pokémon's name, links to the description
+   and the evolution chain, so alternate forms like `deoxys-attack` resolve correctly.
+4. The evolution chain comes from the `evolution-chain` cache, keyed by chain id, so every member of a family
+   shares one cached chain. The "current" marker for the requested Pokémon is added afterwards, so it is
+   never stored in the shared chain.
+5. If any PokeAPI call fails, the whole request fails with the usual error (502, 503 or 429) and nothing is
+   cached.
 
-Only step 3 calls PokeAPI. Cached and stored Pokémon are still served when PokeAPI is down, when the circuit
-breaker is open, or when the rate limit is used up.
+An uncached lookup costs up to 3 PokeAPI calls. A cached one costs none, and is still served when PokeAPI is
+down, when the circuit breaker is open, or when the rate limit is used up. PostgreSQL is a record of looked-up
+Pokémon. It isn't used to answer requests, because it doesn't hold stats, descriptions or evolution data.
 
 ### Catalogue browsing
 
@@ -148,7 +148,7 @@ All error responses are [Problem Details](https://www.rfc-editor.org/rfc/rfc9457
     │   │   ├── exception/           # domain exceptions
     │   │   ├── mapper/              # PokeAPI DTO ⇄ entity ⇄ response
     │   │   ├── repository/          # Spring Data JPA repositories
-    │   │   ├── service/             # lookup + catalogue services, caching
+    │   │   ├── service/             # details + catalogue services and cached loaders
     │   │   └── web/                 # controllers (OpenAPI-annotated), DTOs, exception handler
     │   └── resources
     │       ├── application.yml
@@ -215,7 +215,7 @@ also run that class from your IDE.
 
 Base path: `/api/v1/pokemon`
 
-### Get a Pokémon by name or id
+### Get Pokémon details by name or id
 
 ```http
 GET /api/v1/pokemon/{nameOrId}
@@ -231,15 +231,55 @@ curl -s http://localhost:8080/api/v1/pokemon/pikachu
 {
   "id": 25,
   "name": "pikachu",
-  "height": 4,
-  "weight": 60,
-  "baseExperience": 112,
-  "spriteUrl": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/25.png",
-  "types": ["electric"]
+  "imageUrl": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png",
+  "stats": [
+    { "name": "hp", "value": 35 },
+    { "name": "attack", "value": 55 },
+    { "name": "defense", "value": 40 },
+    { "name": "special-attack", "value": 50 },
+    { "name": "special-defense", "value": 50 },
+    { "name": "speed", "value": 90 }
+  ],
+  "totalStats": 320,
+  "description": "Pikachu that can generate powerful electricity have cheek sacs that are extra soft and super stretchy.",
+  "evolution": {
+    "id": 172, "name": "pichu", "evolvesVia": null, "current": false,
+    "evolvesTo": [
+      {
+        "id": 25, "name": "pikachu", "evolvesVia": "friendship", "current": true,
+        "evolvesTo": [
+          { "id": 26, "name": "raichu", "evolvesVia": "use thunder-stone", "current": false, "evolvesTo": [] }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-`id` is the PokeAPI id, not the internal database key.
+| Field         | Meaning                                                                                       |
+|---------------|-----------------------------------------------------------------------------------------------|
+| `id`          | PokeAPI id, not the internal database key.                                                    |
+| `imageUrl`    | Official artwork. Falls back to the default sprite, and is `null` if neither exists.          |
+| `stats`       | The six base stats in PokeAPI order. `totalStats` is their sum.                               |
+| `description` | English Pokédex text from the most recent game version, cleaned into one line. `null` if none. |
+| `evolution`   | The whole evolution chain as a tree, starting at the base form. Branches (for example Eevee) are listed in PokeAPI order. |
+| `evolvesVia`  | How a stage evolves from its parent: `level 16`, `use thunder-stone`, `trade holding metal-coat`, `friendship (day)`, and so on. Rarer triggers show the trigger name. Conditions that differ between games are joined with `or`. `null` for the base form. |
+| `current`     | `true` on the stage for the requested Pokémon's species.                                      |
+
+> **Breaking change:** this endpoint used to return `height`, `weight`, `baseExperience`, `spriteUrl` and
+> `types`. Those fields are no longer in the response. The basic data is still stored in PostgreSQL.
+
+#### Caching
+
+| Cache             | Key                          | Content                                                  |
+|-------------------|------------------------------|----------------------------------------------------------|
+| `pokemon-details` | Trimmed, lowercased input    | The full detailed view                                   |
+| `evolution-chain` | Evolution chain id           | The chain tree, without the `current` marker             |
+
+Both use the `POKEMON_CACHE_TTL` expiry (default 1 hour). Looking up `pikachu` and then `25` creates two
+`pokemon-details` entries, because sharing them would need a PokeAPI call on every miss to resolve the name.
+The second lookup still reuses the cached evolution chain. The old `pokemon` cache is no longer used; any old
+`pokemon::*` keys expire on their own.
 
 Not found:
 
@@ -392,8 +432,8 @@ So each retry attempt is recorded by the circuit breaker and uses one rate-limit
 | Counted as failure          | `PokeApiException`                                 |
 | Ignored                     | `PokemonNotFoundException`, so a 404 is a valid answer, not a failure |
 
-While the circuit is open, PokeAPI isn't called at all. Requests for Pokémon that aren't stored locally
-get a `503` straight away. Cached and stored Pokémon are still served normally.
+While the circuit is open, PokeAPI isn't called at all. Requests that aren't cached get a `503` straight
+away. Cached Pokémon details and catalogue pages are still served normally.
 
 ### Rate limiter
 
@@ -465,12 +505,14 @@ Reports are written to `build/reports/tests/test/index.html` and
 
 | Test                   | What it covers                                                                       |
 |------------------------|--------------------------------------------------------------------------------------|
-| `PokemonServiceTest`   | Read-through logic with mocked `PokeApiClient` and repository (`@Mock`, `@Spy`, `@InjectMocks`, BDD `given`/`verify`) |
+| `PokemonDetailsServiceTest` | Builds the view from Pokémon, species and chain; uses the linked species for alternate forms; normalizes input; stores new Pokémon once, ignoring concurrent duplicates; single-stage fallback; 404 and failures propagate (`@Mock`, `@Spy`, `@InjectMocks`, BDD `given`/`verify`) |
+| `PokemonDetailsMapperTest`  | Stats order and total, artwork → sprite → `null` fallback, most recent English description and cleaning, evolution summaries (level, item, trade, friendship, unknown, joined), linear/branching/single-stage chains, current stage |
+| `EvolutionChainLoaderTest`  | Fetches and maps a chain without a current stage, propagates client errors |
 | `PokemonCatalogServiceTest` | Page building from the catalogue listing, offset and metadata calculation, partial last page, past-the-end, offset overflow, whole page failing with the original exception |
 | `PokemonSummaryLoaderTest`  | Fetches by id, maps to a catalogue entry, propagates client errors |
-| `PokemonControllerTest`| `@WebMvcTest` slice with `@MockitoBean` services: JSON shape, default and custom paging, 400 for invalid paging (parameterized), 400/404/429/502/503 mapping |
-| `PokeApiClientTest`    | `RestClient` against `MockRestServiceServer`: deserialization (including abilities), catalogue listing, 404 → `PokemonNotFoundException`, 5xx → `PokeApiException` |
-| `PokemonMapperTest`    | DTO/entity/response mapping, type and ability ordering, hectograms → kilograms, null-safety |
+| `PokemonControllerTest`| `@WebMvcTest` slice with `@MockitoBean` services: details and page JSON shape, default and custom paging, 400 for invalid paging (parameterized), 400/404/429/502/503 mapping |
+| `PokeApiClientTest`    | `RestClient` against `MockRestServiceServer`: deserialization (abilities, stats, artwork, species link), species and evolution chain parsing, catalogue listing, 404 → `PokemonNotFoundException`, 5xx → `PokeApiException` |
+| `PokemonMapperTest`    | DTO → entity and catalogue entry mapping, type and ability ordering, hectograms → kilograms, null-safety |
 
 ### Integration tests (Testcontainers)
 
@@ -496,16 +538,18 @@ recorded calls.
 
 | Test                               | What it covers                                                     |
 |------------------------------------|--------------------------------------------------------------------|
-| `PokemonApiIntegrationTest`        | HTTP → service → Redis/PostgreSQL → WireMock. Checks that the first call hits PokeAPI, the second is served from cache, a DB fallback works after the cache is cleared, 404/502 handling, and actuator health |
+| `PokemonApiIntegrationTest`        | Details lookup: image, stats (total 320), cleaned description and evolution chain with the current stage; a repeat lookup makes no PokeAPI calls; Pichu and Pikachu share one chain request; an uncached view is refetched; one PostgreSQL row for `pikachu` and `25`; a cached view while the circuit is open; 404, 400, 502; a failing species call is retried and nothing is cached; actuator health |
 | `PokemonCatalogIntegrationTest`    | Browsing a 3-Pokémon WireMock catalogue: entries and metadata, partial last page, a repeated page served from Redis with no PokeAPI calls, entries reused across page sizes, a cached page served while the circuit is open, `503` for an uncached page while open, past-the-end, invalid paging |
 | `PokeApiResilienceIntegrationTest` | A 5xx is retried 3 times. A 404 is neither retried nor counted by the circuit breaker. Repeated failures open the circuit, and later calls get `503` without reaching PokeAPI (checked through `/actuator/circuitbreakers`). Cached data is still served while the circuit is open |
-| `PokeApiRateLimiterIntegrationTest`| Uses its own context with a quota of 2 calls that doesn't refresh. The third upstream call gets `429` and never reaches WireMock, while cached Pokémon are still served |
+| `PokeApiRateLimiterIntegrationTest`| Uses its own context with a quota of 6 calls that doesn't refresh, enough for two detail lookups (3 calls each). The next upstream call gets `429` and never reaches WireMock, while cached Pokémon are still served |
 | `OpenApiIntegrationTest`           | `/v3/api-docs` has the expected metadata, operations, documented error responses and paging parameters, and excludes actuator. Swagger UI is served |
 | `PokemonRepositoryIntegrationTest` | `@DataJpaTest` against real PostgreSQL with Flyway: queries, type ordering, unique constraints |
 
 To add a PokeAPI stub, put a mapping in `wiremock/mappings/` and, if needed, a body file in
 `wiremock/__files/`. The catch-all `not-found.json` mapping has lower priority, so any path without its
-own stub returns 404. The catalogue stubs (`catalogue-offset-*-limit-*.json`) match on the `offset` and
+own stub returns 404. Details lookups also need `pokemon-species` and `evolution-chain` stubs (for example
+`pikachu-species.json` and `evolution-chain-10.json`). The `broken` Pokémon links to a species stub that
+always returns 503. The catalogue stubs (`catalogue-offset-*-limit-*.json`) match on the `offset` and
 `limit` query parameters and describe a 3-Pokémon catalogue.
 
 ## Database migrations
@@ -514,6 +558,9 @@ Flyway manages the schema. Hibernate runs with `ddl-auto: validate`, so it check
 schema but never changes it.
 
 - `V1__create_pokemon_tables.sql` creates the `pokemon` table and the `pokemon_type` table (ordered by slot).
+
+The details lookup inserts a row the first time it sees a Pokémon, and skips it if one already exists. The
+detailed view (stats, description, evolution) is only cached in Redis, never stored.
 
 To change the schema, add a new file named `src/main/resources/db/migration/V{n}__description.sql`. Don't
 edit migrations that have already been applied.
@@ -606,6 +653,26 @@ This feature used a spec-driven workflow with the project's `/spec` command
 
 3. **Implementation.** The plan was implemented as written. The result is the
    [Browse Pokémon](#browse-pokémon) endpoint, together with its unit and integration tests.
+
+**4. User Story 02: Detailed view (spec → plan → implementation)**
+
+1. **Spec.** Running the command below created the branch `claude/feature/api-pokemon-details-01` and
+   generated [`_specs/api-pokemon-details.md`](_specs/api-pokemon-details.md). Its open questions were
+   answered in the spec. One more point, keeping the PostgreSQL storage, was confirmed in conversation.
+
+   ```text
+   /spec User Story 02 Detailed View Users must be able to access comprehensive data for a chosen
+   Pokemon, specifically viewing its image, core statistics, narrative description, and evolutionary
+   lineage.
+   ```
+
+2. **Plan.** An implementation plan was created from the spec and saved to
+   [`_plans/api-pokemon-details.md`](_plans/api-pokemon-details.md). It covers the design decisions, the
+   PokeAPI call sequence, caching and resilience approach, step-by-step tasks, affected files and risks.
+
+3. **Implementation.** The plan was implemented as written. The result is the
+   [Pokémon details](#get-pokémon-details-by-name-or-id) response of `GET /api/v1/pokemon/{nameOrId}`,
+   together with its unit and integration tests.
 
 All generated code was reviewed. The full test suite (unit and Testcontainers integration tests)
 passes, and the app was smoke-tested against the real PokeAPI using Docker Compose.

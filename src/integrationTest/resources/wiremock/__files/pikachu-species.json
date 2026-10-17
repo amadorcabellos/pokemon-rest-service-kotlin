@@ -1,0 +1,42 @@
+{
+  "id": 25,
+  "name": "pikachu",
+  "flavor_text_entries": [
+    {
+      "flavor_text": "When several of\nthese POKéMON\ngather, their\felectricity could\nbuild and cause\nlightning storms.",
+      "language": {
+        "name": "en",
+        "url": "https://pokeapi.co/api/v2/language/9/"
+      },
+      "version": {
+        "name": "red",
+        "url": "https://pokeapi.co/api/v2/version/1/"
+      }
+    },
+    {
+      "flavor_text": "ピカチュウ",
+      "language": {
+        "name": "ja",
+        "url": "https://pokeapi.co/api/v2/language/1/"
+      },
+      "version": {
+        "name": "violet",
+        "url": "https://pokeapi.co/api/v2/version/40/"
+      }
+    },
+    {
+      "flavor_text": "Pikachu that can gen­\nerate powerful electricity\nhave cheek sacs that are\fextra soft and super stretchy.",
+      "language": {
+        "name": "en",
+        "url": "https://pokeapi.co/api/v2/language/9/"
+      },
+      "version": {
+        "name": "shield",
+        "url": "https://pokeapi.co/api/v2/version/34/"
+      }
+    }
+  ],
+  "evolution_chain": {
+    "url": "https://pokeapi.co/api/v2/evolution-chain/10/"
+  }
+}

@@ -1,6 +1,7 @@
 package com.ballastlane.poke.config;
 
-import com.ballastlane.poke.web.dto.PokemonResponse;
+import com.ballastlane.poke.web.dto.EvolutionStage;
+import com.ballastlane.poke.web.dto.PokemonDetails;
 import com.ballastlane.poke.web.dto.PokemonSummary;
 import com.ballastlane.poke.web.dto.PokemonSummaryPage;
 import java.time.Duration;
@@ -16,8 +17,11 @@ import org.springframework.data.redis.serializer.RedisSerializationContext.Seria
 @EnableCaching
 public class CacheConfig {
 
-	/** Single pokemon lookups, keyed by the normalized name or id. */
-	public static final String POKEMON_CACHE = "pokemon";
+	/** Detailed pokemon views, keyed by the normalized name or id. */
+	public static final String POKEMON_DETAILS_CACHE = "pokemon-details";
+
+	/** Evolution chain trees (without the "current" marker), keyed by chain id; shared by a whole family. */
+	public static final String EVOLUTION_CHAIN_CACHE = "evolution-chain";
 
 	/** Catalogue pages, keyed by {@code page:size}. */
 	public static final String POKEMON_PAGE_CACHE = "pokemon-page";
@@ -29,7 +33,8 @@ public class CacheConfig {
 	RedisCacheManagerBuilderCustomizer pokemonCacheCustomizer(CacheProperties cacheProperties) {
 		Duration ttl = cacheProperties.pokemonTtl();
 		return builder -> builder
-				.withCacheConfiguration(POKEMON_CACHE, jsonCache(PokemonResponse.class, ttl))
+				.withCacheConfiguration(POKEMON_DETAILS_CACHE, jsonCache(PokemonDetails.class, ttl))
+				.withCacheConfiguration(EVOLUTION_CHAIN_CACHE, jsonCache(EvolutionStage.class, ttl))
 				.withCacheConfiguration(POKEMON_PAGE_CACHE, jsonCache(PokemonSummaryPage.class, ttl))
 				.withCacheConfiguration(POKEMON_SUMMARY_CACHE, jsonCache(PokemonSummary.class, ttl));
 	}

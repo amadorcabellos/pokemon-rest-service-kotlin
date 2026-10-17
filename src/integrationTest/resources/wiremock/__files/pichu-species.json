@@ -1,0 +1,20 @@
+{
+  "id": 172,
+  "name": "pichu",
+  "flavor_text_entries": [
+    {
+      "flavor_text": "It is not yet skilled at storing\nelectricity.",
+      "language": {
+        "name": "en",
+        "url": "https://pokeapi.co/api/v2/language/9/"
+      },
+      "version": {
+        "name": "shield",
+        "url": "https://pokeapi.co/api/v2/version/34/"
+      }
+    }
+  ],
+  "evolution_chain": {
+    "url": "https://pokeapi.co/api/v2/evolution-chain/10/"
+  }
+}

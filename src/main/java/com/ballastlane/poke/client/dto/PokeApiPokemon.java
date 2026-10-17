@@ -16,10 +16,24 @@ public record PokeApiPokemon(
 		@JsonProperty("base_experience") Integer baseExperience,
 		Sprites sprites,
 		List<TypeSlot> types,
-		List<AbilitySlot> abilities) {
+		List<AbilitySlot> abilities,
+		List<StatSlot> stats,
+		NamedResource species) {
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record Sprites(@JsonProperty("front_default") String frontDefault) {
+	public record Sprites(@JsonProperty("front_default") String frontDefault, OtherSprites other) {
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record OtherSprites(@JsonProperty("official-artwork") Artwork officialArtwork) {
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record Artwork(@JsonProperty("front_default") String frontDefault) {
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record StatSlot(@JsonProperty("base_stat") int baseStat, NamedResource stat) {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)

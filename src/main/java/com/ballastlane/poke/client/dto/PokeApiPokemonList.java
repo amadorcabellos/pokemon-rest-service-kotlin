@@ -1,5 +1,6 @@
 package com.ballastlane.poke.client.dto;
 
+import com.ballastlane.poke.client.PokeApiUrls;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.util.List;
 
@@ -20,8 +21,7 @@ public record PokeApiPokemonList(int count, List<Entry> results) {
 		 * PokeAPI id, taken from the last path segment of the detail URL (e.g. {@code .../pokemon/25/}).
 		 */
 		public int id() {
-			String path = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
-			return Integer.parseInt(path.substring(path.lastIndexOf('/') + 1));
+			return PokeApiUrls.idFrom(url);
 		}
 
 	}

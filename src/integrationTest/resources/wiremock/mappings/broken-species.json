@@ -1,0 +1,9 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPath": "/api/v2/pokemon-species/9999"
+  },
+  "response": {
+    "status": 503
+  }
+}

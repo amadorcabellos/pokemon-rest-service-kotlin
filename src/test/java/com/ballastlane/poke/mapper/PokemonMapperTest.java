@@ -8,7 +8,6 @@ import com.ballastlane.poke.client.dto.PokeApiPokemon.NamedResource;
 import com.ballastlane.poke.client.dto.PokeApiPokemon.Sprites;
 import com.ballastlane.poke.client.dto.PokeApiPokemon.TypeSlot;
 import com.ballastlane.poke.domain.Pokemon;
-import com.ballastlane.poke.web.dto.PokemonResponse;
 import com.ballastlane.poke.web.dto.PokemonSummary;
 import com.ballastlane.poke.web.dto.Skill;
 import java.math.BigDecimal;
@@ -21,10 +20,10 @@ class PokemonMapperTest {
 
 	@Test
 	void toEntityOrdersTypesBySlot() {
-		PokeApiPokemon source = new PokeApiPokemon(1, "bulbasaur", 7, 69, 64, new Sprites("sprite.png"),
+		PokeApiPokemon source = new PokeApiPokemon(1, "bulbasaur", 7, 69, 64, new Sprites("sprite.png", null),
 				List.of(new TypeSlot(2, new NamedResource("poison", null)),
 						new TypeSlot(1, new NamedResource("grass", null))),
-				List.of());
+				List.of(), null, null);
 
 		Pokemon entity = mapper.toEntity(source);
 
@@ -36,7 +35,7 @@ class PokemonMapperTest {
 
 	@Test
 	void toEntityHandlesMissingOptionalFields() {
-		PokeApiPokemon source = new PokeApiPokemon(132, "ditto", 3, 40, null, null, null, null);
+		PokeApiPokemon source = new PokeApiPokemon(132, "ditto", 3, 40, null, null, null, null, null, null);
 
 		Pokemon entity = mapper.toEntity(source);
 
@@ -47,11 +46,12 @@ class PokemonMapperTest {
 
 	@Test
 	void toSummaryMapsCategoryMassAndSkills() {
-		PokeApiPokemon source = new PokeApiPokemon(1, "bulbasaur", 7, 69, 64, new Sprites("sprite.png"),
+		PokeApiPokemon source = new PokeApiPokemon(1, "bulbasaur", 7, 69, 64, new Sprites("sprite.png", null),
 				List.of(new TypeSlot(2, new NamedResource("poison", null)),
 						new TypeSlot(1, new NamedResource("grass", null))),
 				List.of(new AbilitySlot(3, true, new NamedResource("chlorophyll", null)),
-						new AbilitySlot(1, false, new NamedResource("overgrow", null))));
+						new AbilitySlot(1, false, new NamedResource("overgrow", null))),
+				null, null);
 
 		PokemonSummary summary = mapper.toSummary(source);
 
@@ -61,29 +61,19 @@ class PokemonMapperTest {
 
 	@Test
 	void toSummaryConvertsHectogramsToKilograms() {
-		assertThat(mapper.toSummary(new PokeApiPokemon(25, "pikachu", 4, 60, 112, null, null, null)).massKg())
+		assertThat(mapper.toSummary(new PokeApiPokemon(25, "pikachu", 4, 60, 112, null, null, null, null, null)).massKg())
 				.isEqualByComparingTo("6.0");
-		assertThat(mapper.toSummary(new PokeApiPokemon(143, "snorlax", 21, 4600, 189, null, null, null)).massKg())
+		assertThat(mapper.toSummary(new PokeApiPokemon(143, "snorlax", 21, 4600, 189, null, null, null, null, null)).massKg())
 				.isEqualByComparingTo("460.0");
 	}
 
 	@Test
 	void toSummaryHandlesMissingSpriteTypesAndAbilities() {
-		PokemonSummary summary = mapper.toSummary(new PokeApiPokemon(132, "ditto", 3, 40, null, null, null, null));
+		PokemonSummary summary = mapper.toSummary(new PokeApiPokemon(132, "ditto", 3, 40, null, null, null, null, null, null));
 
 		assertThat(summary.spriteUrl()).isNull();
 		assertThat(summary.category()).isEmpty();
 		assertThat(summary.skills()).isEmpty();
-	}
-
-	@Test
-	void toResponseUsesPokeApiId() {
-		Pokemon entity = new Pokemon(25, "pikachu", 4, 60, 112, "sprite.png", List.of("electric"));
-
-		PokemonResponse response = mapper.toResponse(entity);
-
-		assertThat(response).isEqualTo(new PokemonResponse(25, "pikachu", 4, 60, 112, "sprite.png",
-				List.of("electric")));
 	}
 
 }

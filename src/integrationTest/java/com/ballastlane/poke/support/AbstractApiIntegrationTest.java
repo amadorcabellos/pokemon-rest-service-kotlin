@@ -43,13 +43,13 @@ public abstract class AbstractApiIntegrationTest {
 	@BeforeEach
 	void resetState() {
 		repository.deleteAll();
-		cacheManager.getCacheNames().forEach(name -> cacheManager.getCache(name).clear());
+		cacheManager.getCacheNames().forEach(name -> cacheManager.getCache(name).invalidate());
 		pokeApi.resetRequests();
 		pokeApiCircuitBreaker().reset();
 	}
 
-	protected Cache pokemonCache() {
-		return cacheManager.getCache(CacheConfig.POKEMON_CACHE);
+	protected Cache pokemonDetailsCache() {
+		return cacheManager.getCache(CacheConfig.POKEMON_DETAILS_CACHE);
 	}
 
 	protected CircuitBreaker pokeApiCircuitBreaker() {

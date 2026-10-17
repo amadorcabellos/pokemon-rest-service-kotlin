@@ -32,9 +32,10 @@ class PokemonSummaryLoaderTest {
 	@Test
 	void fetchesByIdAndMapsToSummary() {
 		given(pokeApiClient.fetchPokemon("25")).willReturn(new PokeApiPokemon(25, "pikachu", 4, 60, 112,
-				new PokeApiPokemon.Sprites("sprite.png"),
+				new PokeApiPokemon.Sprites("sprite.png", null),
 				List.of(new PokeApiPokemon.TypeSlot(1, new PokeApiPokemon.NamedResource("electric", null))),
-				List.of(new PokeApiPokemon.AbilitySlot(1, false, new PokeApiPokemon.NamedResource("static", null)))));
+				List.of(new PokeApiPokemon.AbilitySlot(1, false, new PokeApiPokemon.NamedResource("static", null))),
+				null, null));
 
 		PokemonSummary summary = loader.load(25);
 

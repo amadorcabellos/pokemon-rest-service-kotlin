@@ -6,44 +6,99 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.ballastlane.poke.support.AbstractApiIntegrationTest;
-import com.ballastlane.poke.web.dto.PokemonResponse;
+import com.ballastlane.poke.web.dto.PokemonDetails;
 import org.junit.jupiter.api.Test;
 
 /**
- * End-to-end flow through the HTTP layer, PostgreSQL, Redis and a stubbed PokeAPI.
+ * Detailed pokemon lookup end to end: HTTP layer, PokeAPI (WireMock: pokemon → species → evolution chain),
+ * Redis caching and recording in PostgreSQL.
  */
 class PokemonApiIntegrationTest extends AbstractApiIntegrationTest {
 
 	@Test
-	void fetchesFromPokeApiThenServesFromCache() throws Exception {
+	void returnsDetailedView() throws Exception {
 		mockMvc.perform(get("/api/v1/pokemon/pikachu"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.id").value(25))
 				.andExpect(jsonPath("$.name").value("pikachu"))
-				.andExpect(jsonPath("$.types[0]").value("electric"));
+				.andExpect(jsonPath("$.imageUrl").value(
+						"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png"))
+				.andExpect(jsonPath("$.stats.length()").value(6))
+				.andExpect(jsonPath("$.stats[0].name").value("hp"))
+				.andExpect(jsonPath("$.stats[0].value").value(35))
+				.andExpect(jsonPath("$.stats[5].name").value("speed"))
+				.andExpect(jsonPath("$.stats[5].value").value(90))
+				.andExpect(jsonPath("$.totalStats").value(320))
+				.andExpect(jsonPath("$.description").value("Pikachu that can generate powerful electricity have cheek "
+						+ "sacs that are extra soft and super stretchy."))
+				.andExpect(jsonPath("$.evolution.name").value("pichu"))
+				.andExpect(jsonPath("$.evolution.current").value(false))
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].name").value("pikachu"))
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].evolvesVia").value("friendship"))
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].current").value(true))
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].evolvesTo[0].name").value("raichu"))
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].evolvesTo[0].evolvesVia").value("use thunder-stone"))
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].evolvesTo[0].evolvesTo").isEmpty());
+	}
 
-		assertThat(repository.findByNameIgnoreCase("pikachu")).isPresent();
-		assertThat(pokemonCache().get("pikachu", PokemonResponse.class))
-				.extracting(PokemonResponse::name)
+	@Test
+	void servesRepeatedLookupFromCache() throws Exception {
+		mockMvc.perform(get("/api/v1/pokemon/pikachu")).andExpect(status().isOk());
+		assertThat(pokemonDetailsCache().get("pikachu", PokemonDetails.class))
+				.extracting(PokemonDetails::name)
 				.isEqualTo("pikachu");
 
 		mockMvc.perform(get("/api/v1/pokemon/PIKACHU")).andExpect(status().isOk());
 
 		assertThat(pokeApi.countRequests("/api/v2/pokemon/pikachu")).isEqualTo(1);
+		assertThat(pokeApi.countRequests("/api/v2/pokemon-species/25")).isEqualTo(1);
+		assertThat(pokeApi.countRequests("/api/v2/evolution-chain/10")).isEqualTo(1);
 	}
 
 	@Test
-	void servesFromDatabaseWhenCacheIsEmpty() throws Exception {
-		mockMvc.perform(get("/api/v1/pokemon/1")).andExpect(status().isOk());
-		pokemonCache().clear();
-
-		mockMvc.perform(get("/api/v1/pokemon/1"))
+	void familyMembersShareOneEvolutionChainRequest() throws Exception {
+		mockMvc.perform(get("/api/v1/pokemon/pichu"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.name").value("bulbasaur"))
-				.andExpect(jsonPath("$.types[0]").value("grass"))
-				.andExpect(jsonPath("$.types[1]").value("poison"));
+				.andExpect(jsonPath("$.evolution.name").value("pichu"))
+				.andExpect(jsonPath("$.evolution.current").value(true))
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].current").value(false));
+		mockMvc.perform(get("/api/v1/pokemon/pikachu"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.evolution.current").value(false))
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].current").value(true));
 
-		assertThat(pokeApi.countRequests("/api/v2/pokemon/1")).isEqualTo(1);
+		assertThat(pokeApi.countRequests("/api/v2/evolution-chain/10")).isEqualTo(1);
+	}
+
+	@Test
+	void refetchesFromPokeApiWhenViewIsNoLongerCached() throws Exception {
+		mockMvc.perform(get("/api/v1/pokemon/pikachu")).andExpect(status().isOk());
+		pokemonDetailsCache().invalidate();
+
+		mockMvc.perform(get("/api/v1/pokemon/pikachu")).andExpect(status().isOk());
+
+		assertThat(pokeApi.countRequests("/api/v2/pokemon/pikachu")).isEqualTo(2);
+		assertThat(pokeApi.countRequests("/api/v2/evolution-chain/10")).isEqualTo(1);
+	}
+
+	@Test
+	void recordsLookedUpPokemonInPostgresOnce() throws Exception {
+		mockMvc.perform(get("/api/v1/pokemon/pikachu")).andExpect(status().isOk());
+		mockMvc.perform(get("/api/v1/pokemon/25")).andExpect(status().isOk());
+
+		assertThat(repository.count()).isEqualTo(1);
+		assertThat(repository.findByPokeApiId(25))
+				.hasValueSatisfying(pokemon -> assertThat(pokemon.getTypes()).containsExactly("electric"));
+	}
+
+	@Test
+	void servesCachedViewWhileCircuitIsOpen() throws Exception {
+		mockMvc.perform(get("/api/v1/pokemon/pikachu")).andExpect(status().isOk());
+		pokeApiCircuitBreaker().transitionToOpenState();
+
+		mockMvc.perform(get("/api/v1/pokemon/pikachu"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalStats").value(320));
 	}
 
 	@Test
@@ -53,6 +108,19 @@ class PokemonApiIntegrationTest extends AbstractApiIntegrationTest {
 				.andExpect(jsonPath("$.title").value("Pokemon not found"));
 
 		assertThat(repository.count()).isZero();
+	}
+
+	@Test
+	void returns400ForInvalidName() throws Exception {
+		mockMvc.perform(get("/api/v1/pokemon/pika_chu!")).andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void failsWholeLookupWithoutCachingWhenSpeciesFails() throws Exception {
+		mockMvc.perform(get("/api/v1/pokemon/broken")).andExpect(status().isBadGateway());
+
+		assertThat(pokeApi.countRequests("/api/v2/pokemon-species/9999")).isEqualTo(3);
+		assertThat(pokemonDetailsCache().get("broken")).isNull();
 	}
 
 	@Test

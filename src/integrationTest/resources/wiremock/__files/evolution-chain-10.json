@@ -1,0 +1,62 @@
+{
+  "id": 10,
+  "baby_trigger_item": null,
+  "chain": {
+    "species": {
+      "name": "pichu",
+      "url": "https://pokeapi.co/api/v2/pokemon-species/172/"
+    },
+    "is_baby": false,
+    "evolution_details": [],
+    "evolves_to": [
+      {
+        "species": {
+          "name": "pikachu",
+          "url": "https://pokeapi.co/api/v2/pokemon-species/25/"
+        },
+        "is_baby": false,
+        "evolution_details": [
+          {
+            "trigger": {
+              "name": "level-up",
+              "url": "https://pokeapi.co/api/v2/evolution-trigger/1/"
+            },
+            "min_level": null,
+            "item": null,
+            "held_item": null,
+            "min_happiness": 220,
+            "time_of_day": "",
+            "gender": null
+          }
+        ],
+        "evolves_to": [
+          {
+            "species": {
+              "name": "raichu",
+              "url": "https://pokeapi.co/api/v2/pokemon-species/26/"
+            },
+            "is_baby": false,
+            "evolution_details": [
+              {
+                "trigger": {
+                  "name": "use-item",
+                  "url": "https://pokeapi.co/api/v2/evolution-trigger/1/"
+                },
+                "min_level": null,
+                "item": {
+                  "name": "thunder-stone",
+                  "url": "https://pokeapi.co/api/v2/item/83/"
+                },
+                "held_item": null,
+                "min_happiness": null,
+                "time_of_day": "",
+                "gender": null
+              }
+            ],
+            "evolves_to": []
+          }
+        ]
+      }
+    ]
+  }
+}
