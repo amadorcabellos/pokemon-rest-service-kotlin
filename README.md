@@ -1,4 +1,4 @@
-# poke-rest-service
+# pokemon-rest-service
 
 A Spring Boot REST API that serves Pokémon data from [PokeAPI](https://pokeapi.co). It stores results in
 **PostgreSQL** and caches them in **Redis**. You can also browse the full PokeAPI catalogue page by page,
@@ -528,11 +528,11 @@ The `Dockerfile` has two stages:
    as a non-root `spring` user, and sets `-XX:MaxRAMPercentage=75`.
 
 ```bash
-docker build -t poke-rest-service .
+docker build -t pokemon-rest-service .
 docker run --rm -p 8080:8080 \
   -e DB_URL=jdbc:postgresql://host.docker.internal:5432/poke \
   -e REDIS_HOST=host.docker.internal \
-  poke-rest-service
+  pokemon-rest-service
 ```
 
 `compose.yaml` runs PostgreSQL and Redis with health checks. The app waits until both are healthy before it

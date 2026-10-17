@@ -1,6 +1,6 @@
 spring:
   application:
-    name: poke-rest-service
+    name: pokemon-rest-service
   threads:
     virtual:
       enabled: true

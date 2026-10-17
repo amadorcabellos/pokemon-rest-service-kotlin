@@ -15,7 +15,7 @@ class OpenApiIntegrationTest extends AbstractApiIntegrationTest {
 	void servesOpenApiDocument() throws Exception {
 		mockMvc.perform(get("/v3/api-docs"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.info.title").value("poke-rest-service"))
+				.andExpect(jsonPath("$.info.title").value("pokemon-rest-service"))
 				.andExpect(jsonPath("$.paths['/api/v1/pokemon/{nameOrId}'].get.summary")
 						.value("Get a pokemon by name or id"))
 				.andExpect(jsonPath("$.paths['/api/v1/pokemon/{nameOrId}'].get.responses['503']").exists())

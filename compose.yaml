@@ -27,7 +27,7 @@ services:
 
   app:
     build: .
-    image: poke-rest-service:latest
+    image: pokemon-rest-service:latest
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/poke
       DB_USERNAME: poke
