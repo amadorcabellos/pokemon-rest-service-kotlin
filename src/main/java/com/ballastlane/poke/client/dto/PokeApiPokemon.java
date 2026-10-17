@@ -15,7 +15,8 @@ public record PokeApiPokemon(
 		int weight,
 		@JsonProperty("base_experience") Integer baseExperience,
 		Sprites sprites,
-		List<TypeSlot> types) {
+		List<TypeSlot> types,
+		List<AbilitySlot> abilities) {
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record Sprites(@JsonProperty("front_default") String frontDefault) {
@@ -23,6 +24,10 @@ public record PokeApiPokemon(
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record TypeSlot(int slot, NamedResource type) {
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record AbilitySlot(int slot, @JsonProperty("is_hidden") boolean hidden, NamedResource ability) {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)

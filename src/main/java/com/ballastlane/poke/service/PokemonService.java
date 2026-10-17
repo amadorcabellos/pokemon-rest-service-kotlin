@@ -11,10 +11,7 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cache.annotation.Cacheable;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Resolves pokemon using a read-through strategy: Redis cache, then PostgreSQL, then PokeAPI.
@@ -46,11 +43,6 @@ public class PokemonService {
 		String key = nameOrId.trim().toLowerCase(Locale.ROOT);
 		Pokemon pokemon = findStored(key).orElseGet(() -> fetchAndStore(key));
 		return pokemonMapper.toResponse(pokemon);
-	}
-
-	@Transactional(readOnly = true)
-	public Page<PokemonResponse> listStored(Pageable pageable) {
-		return pokemonRepository.findAll(pageable).map(pokemonMapper::toResponse);
 	}
 
 	private Optional<Pokemon> findStored(String key) {

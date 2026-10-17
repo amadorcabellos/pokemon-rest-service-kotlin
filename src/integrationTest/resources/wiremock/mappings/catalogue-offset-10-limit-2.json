@@ -1,0 +1,26 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPath": "/api/v2/pokemon",
+    "queryParameters": {
+      "offset": {
+        "equalTo": "10"
+      },
+      "limit": {
+        "equalTo": "2"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "count": 3,
+      "next": null,
+      "previous": null,
+      "results": []
+    }
+  }
+}

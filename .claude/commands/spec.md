@@ -61,7 +61,7 @@ Create a markdown spec document that Plan mode can use directly and save it in t
 After the file is saved, respond to the user with a short summary in this exact format:
 
 Branch: <branch_name>
-Spec file: specs/<feature_slug>.md
+Spec file: _specs/<feature_slug>.md
 Title: <feature_title>
 
 Do not repeat the full spec in the chat output unless the user explicitly asks to see it. The main goal is to save the spec file and report where it lives and what branch name to use.

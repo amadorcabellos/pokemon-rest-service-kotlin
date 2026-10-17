@@ -62,18 +62,6 @@ class PokemonApiIntegrationTest extends AbstractApiIntegrationTest {
 	}
 
 	@Test
-	void listsStoredPokemon() throws Exception {
-		mockMvc.perform(get("/api/v1/pokemon/pikachu")).andExpect(status().isOk());
-		mockMvc.perform(get("/api/v1/pokemon/1")).andExpect(status().isOk());
-
-		mockMvc.perform(get("/api/v1/pokemon"))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.totalElements").value(2))
-				.andExpect(jsonPath("$.content[0].name").value("bulbasaur"))
-				.andExpect(jsonPath("$.content[1].name").value("pikachu"));
-	}
-
-	@Test
 	void healthEndpointIsUp() throws Exception {
 		mockMvc.perform(get("/actuator/health"))
 				.andExpect(status().isOk())

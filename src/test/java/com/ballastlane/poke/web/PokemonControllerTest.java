@@ -1,27 +1,33 @@
 package com.ballastlane.poke.web;
 
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.ballastlane.poke.config.CatalogProperties;
 import com.ballastlane.poke.exception.PokeApiException;
 import com.ballastlane.poke.exception.PokemonNotFoundException;
+import com.ballastlane.poke.service.PokemonCatalogService;
 import com.ballastlane.poke.service.PokemonService;
 import com.ballastlane.poke.web.dto.PokemonResponse;
+import com.ballastlane.poke.web.dto.PokemonSummary;
+import com.ballastlane.poke.web.dto.PokemonSummaryPage;
+import com.ballastlane.poke.web.dto.Skill;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.ratelimiter.RateLimiter;
 import io.github.resilience4j.ratelimiter.RequestNotPermitted;
+import java.math.BigDecimal;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -34,8 +40,21 @@ class PokemonControllerTest {
 	@Autowired
 	private MockMvc mockMvc;
 
+	private static final PokemonSummary BULBASAUR = new PokemonSummary(1, "bulbasaur", "sprite.png",
+			List.of("grass", "poison"), new BigDecimal("6.9"),
+			List.of(new Skill("overgrow", false), new Skill("chlorophyll", true)));
+
 	@MockitoBean
 	private PokemonService pokemonService;
+
+	@MockitoBean
+	private PokemonCatalogService pokemonCatalogService;
+
+	@TestConfiguration
+	@EnableConfigurationProperties(CatalogProperties.class)
+	static class CatalogPropertiesConfig {
+
+	}
 
 	@Test
 	void getPokemonReturnsPokemon() throws Exception {
@@ -98,15 +117,63 @@ class PokemonControllerTest {
 	}
 
 	@Test
-	void listStoredReturnsPage() throws Exception {
-		given(pokemonService.listStored(any(Pageable.class)))
-				.willReturn(new PageImpl<>(List.of(PIKACHU), PageRequest.of(0, 20), 1));
+	void listPokemonUsesDefaultPaging() throws Exception {
+		given(pokemonCatalogService.getPage(0, 20))
+				.willReturn(new PokemonSummaryPage(List.of(BULBASAUR), 0, 20, 1302, 66));
 
 		mockMvc.perform(get("/api/v1/pokemon"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.content[0].name").value("pikachu"))
-				.andExpect(jsonPath("$.totalElements").value(1))
-				.andExpect(jsonPath("$.page").value(0));
+				.andExpect(jsonPath("$.content[0].id").value(1))
+				.andExpect(jsonPath("$.content[0].spriteUrl").value("sprite.png"))
+				.andExpect(jsonPath("$.content[0].category[0]").value("grass"))
+				.andExpect(jsonPath("$.content[0].category[1]").value("poison"))
+				.andExpect(jsonPath("$.content[0].massKg").value(6.9))
+				.andExpect(jsonPath("$.content[0].skills[1].name").value("chlorophyll"))
+				.andExpect(jsonPath("$.content[0].skills[1].hidden").value(true))
+				.andExpect(jsonPath("$.page").value(0))
+				.andExpect(jsonPath("$.size").value(20))
+				.andExpect(jsonPath("$.totalElements").value(1302))
+				.andExpect(jsonPath("$.totalPages").value(66));
+	}
+
+	@Test
+	void listPokemonPassesCustomPaging() throws Exception {
+		given(pokemonCatalogService.getPage(3, 50)).willReturn(new PokemonSummaryPage(List.of(), 3, 50, 100, 2));
+
+		mockMvc.perform(get("/api/v1/pokemon").param("page", "3").param("size", "50"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.content").isEmpty())
+				.andExpect(jsonPath("$.page").value(3));
+	}
+
+	@ParameterizedTest
+	@CsvSource(delimiter = '|', quoteCharacter = '"', value = {
+			"page=-1        | 'page' must be 0 or greater",
+			"size=0         | 'size' must be between 1 and 50",
+			"size=51        | 'size' must be between 1 and 50",
+			"size=abc       | 'size' must be a number",
+			"page=1.5       | 'page' must be a number" })
+	void listPokemonRejectsInvalidPaging(String query, String detail) throws Exception {
+		mockMvc.perform(get("/api/v1/pokemon?" + query))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.title").value("Invalid request"))
+				.andExpect(jsonPath("$.detail").value(detail));
+
+		verifyNoInteractions(pokemonCatalogService);
+	}
+
+	@Test
+	void listPokemonMapsUpstreamFailures() throws Exception {
+		given(pokemonCatalogService.getPage(0, 20)).willThrow(new PokeApiException("boom", new RuntimeException()));
+		mockMvc.perform(get("/api/v1/pokemon")).andExpect(status().isBadGateway());
+
+		given(pokemonCatalogService.getPage(1, 20)).willThrow(
+				CallNotPermittedException.createCallNotPermittedException(CircuitBreaker.ofDefaults("pokeapi")));
+		mockMvc.perform(get("/api/v1/pokemon").param("page", "1")).andExpect(status().isServiceUnavailable());
+
+		given(pokemonCatalogService.getPage(2, 20)).willThrow(
+				RequestNotPermitted.createRequestNotPermitted(RateLimiter.ofDefaults("pokeapi")));
+		mockMvc.perform(get("/api/v1/pokemon").param("page", "2")).andExpect(status().isTooManyRequests());
 	}
 
 }

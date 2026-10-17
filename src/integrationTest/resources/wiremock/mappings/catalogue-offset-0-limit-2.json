@@ -1,0 +1,35 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPath": "/api/v2/pokemon",
+    "queryParameters": {
+      "offset": {
+        "equalTo": "0"
+      },
+      "limit": {
+        "equalTo": "2"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "count": 3,
+      "next": null,
+      "previous": null,
+      "results": [
+        {
+          "name": "bulbasaur",
+          "url": "https://pokeapi.co/api/v2/pokemon/1/"
+        },
+        {
+          "name": "ivysaur",
+          "url": "https://pokeapi.co/api/v2/pokemon/2/"
+        }
+      ]
+    }
+  }
+}

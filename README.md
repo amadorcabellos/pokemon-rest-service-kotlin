@@ -1,7 +1,8 @@
 # poke-rest-service
 
 A Spring Boot REST API that serves Pokémon data from [PokeAPI](https://pokeapi.co). It stores results in
-**PostgreSQL** and caches them in **Redis**. Calls to PokeAPI are protected by **Resilience4j** (retry,
+**PostgreSQL** and caches them in **Redis**. You can also browse the full PokeAPI catalogue page by page,
+with each entry's sprite, category, mass and skills. Calls to PokeAPI are protected by **Resilience4j** (retry,
 circuit breaker and rate limiter). The API is documented with **OpenAPI 3** and **Swagger UI**.
 
 Built with Java 21, Spring Boot 4.1 and Gradle 9.
@@ -29,6 +30,10 @@ Built with Java 21, Spring Boot 4.1 and Gradle 9.
 ---
 
 ## Architecture
+
+The API has two read paths: looking up a single Pokémon, and browsing the catalogue.
+
+### Single Pokémon lookup
 
 The service reads data in this order: Redis cache, then PostgreSQL, then PokeAPI.
 
@@ -69,11 +74,40 @@ The service reads data in this order: Redis cache, then PostgreSQL, then PokeAPI
 Only step 3 calls PokeAPI. Cached and stored Pokémon are still served when PokeAPI is down, when the circuit
 breaker is open, or when the rate limit is used up.
 
-Error mapping:
+### Catalogue browsing
+
+```
+          GET /api/v1/pokemon?page&size
+                         │
+                         ▼
+             ┌───────────────────────┐   hit   ┌─────────┐
+             │ PokemonCatalogService │ ◄────── │  Redis  │  "pokemon-page", key page:size
+             └───────────┬───────────┘         └─────────┘
+                    miss │ 1 catalogue call: /pokemon?offset&limit (count + names/ids)
+                         ▼
+             ┌───────────────────────┐   hit   ┌─────────┐
+             │ PokemonSummaryLoader  │ ◄────── │  Redis  │  "pokemon-summary", key id
+             │ (in parallel, per id) │         └─────────┘
+             └───────────┬───────────┘
+                    miss │ 1 detail call per uncached Pokémon: /pokemon/{id}
+                         ▼
+                  PokeApiClient → PokeAPI      (same resilience layer)
+```
+
+1. A page request first checks the `pokemon-page` cache, keyed `page:size`.
+2. On a miss, the service fetches that slice of the PokeAPI catalogue, which gives the total count and the
+   ids on the page.
+3. Each entry is loaded from the `pokemon-summary` cache, keyed by id. Only uncached Pokémon are fetched
+   from PokeAPI, in parallel on virtual threads. Because entries are cached separately, pages of different
+   sizes reuse them.
+4. If any entry fails, the whole page fails with the usual error (502, 503 or 429) and isn't cached.
+5. Catalogue entries are only cached in Redis. They are not stored in PostgreSQL.
+
+Error mapping (both paths):
 
 | Situation                                          | HTTP status               |
 |----------------------------------------------------|---------------------------|
-| Invalid `nameOrId` format                          | `400 Bad Request`         |
+| Invalid `nameOrId`, `page` or `size`               | `400 Bad Request`         |
 | PokeAPI returns 404                                | `404 Not Found`           |
 | Outgoing PokeAPI rate limit used up                | `429 Too Many Requests`   |
 | PokeAPI unreachable / 5xx / timeout, after retries | `502 Bad Gateway`         |
@@ -114,7 +148,7 @@ All error responses are [Problem Details](https://www.rfc-editor.org/rfc/rfc9457
     │   │   ├── exception/           # domain exceptions
     │   │   ├── mapper/              # PokeAPI DTO ⇄ entity ⇄ response
     │   │   ├── repository/          # Spring Data JPA repositories
-    │   │   ├── service/             # business logic + caching
+    │   │   ├── service/             # lookup + catalogue services, caching
     │   │   └── web/                 # controllers (OpenAPI-annotated), DTOs, exception handler
     │   └── resources
     │       ├── application.yml
@@ -126,6 +160,7 @@ All error responses are [Problem Details](https://www.rfc-editor.org/rfc/rfc9457
         ├── java/com/ballastlane/poke
         │   ├── TestPokeRestServiceApplication.java   # run app with Testcontainers
         │   ├── support/             # shared containers + AbstractApiIntegrationTest base class
+        │   ├── catalog/             # catalogue browsing and caching tests
         │   ├── repository/          # @DataJpaTest against real PostgreSQL
         │   ├── resilience/          # retry, circuit breaker and rate limiter tests
         │   └── web/                 # full-stack API and OpenAPI tests
@@ -217,24 +252,71 @@ Not found:
 }
 ```
 
-### List stored Pokémon
+### Browse Pokémon
 
 ```http
-GET /api/v1/pokemon?page=0&size=20&sort=name,asc
+GET /api/v1/pokemon?page=0&size=20
 ```
 
-This lists only the Pokémon already saved in PostgreSQL, that is, ones requested at least once. By
-default it returns 20 items per page, sorted by `pokeApiId` in ascending order.
+Pages through the **full PokeAPI catalogue**, ordered by PokeAPI id.
+
+| Parameter | Default | Rules                                              |
+|-----------|---------|----------------------------------------------------|
+| `page`    | `0`     | Zero-based. Must be 0 or greater.                  |
+| `size`    | `20`    | 1 to 50 (`CATALOG_DEFAULT_PAGE_SIZE`, `CATALOG_MAX_PAGE_SIZE`) |
+
+Values outside these ranges, or non-numeric values, return `400`. A page past the end of the catalogue
+returns `200` with an empty `content` list and correct totals.
+
+```bash
+curl -s "http://localhost:8080/api/v1/pokemon?page=0&size=2"
+```
 
 ```json
 {
-  "content": [ { "id": 1, "name": "bulbasaur", "...": "..." } ],
+  "content": [
+    {
+      "id": 1,
+      "name": "bulbasaur",
+      "spriteUrl": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/1.png",
+      "category": ["grass", "poison"],
+      "massKg": 6.9,
+      "skills": [
+        { "name": "overgrow", "hidden": false },
+        { "name": "chlorophyll", "hidden": true }
+      ]
+    },
+    { "id": 2, "name": "ivysaur", "...": "..." }
+  ],
   "page": 0,
-  "size": 20,
-  "totalElements": 1,
-  "totalPages": 1
+  "size": 2,
+  "totalElements": 1351,
+  "totalPages": 676
 }
 ```
+
+| Field       | Meaning                                                                 |
+|-------------|-------------------------------------------------------------------------|
+| `spriteUrl` | Default front sprite. `null` if PokeAPI has none (some alternate forms). |
+| `category`  | The Pokémon's types, in slot order.                                     |
+| `massKg`    | Weight in kilograms. PokeAPI reports hectograms, so 69 becomes 6.9.     |
+| `skills`    | Abilities in slot order. `hidden` marks hidden abilities.               |
+
+`totalElements` is PokeAPI's catalogue count, which includes alternate forms (ids 10001 and up).
+
+> **Breaking change:** this endpoint used to list only the Pokémon stored in PostgreSQL, and accepted a
+> `sort` parameter. It now browses the full PokeAPI catalogue, sorted by id only.
+
+#### Caching
+
+| Cache             | Key         | Content                         |
+|-------------------|-------------|---------------------------------|
+| `pokemon-page`    | `page:size` | A whole page response           |
+| `pokemon-summary` | PokeAPI id  | One catalogue entry             |
+
+Both caches share the `POKEMON_CACHE_TTL` expiry (default 1 hour), so the catalogue total refreshes at
+least that often. The first request for a page of 20 makes up to 21 PokeAPI calls. Repeating that page makes
+none. Concurrent requests for the same uncached page or entry are de-duplicated within one app instance.
 
 ### Operational endpoints
 
@@ -321,7 +403,12 @@ This is a client-side limit on how often this service calls PokeAPI, in line wit
 | Setting           | Value                                                  |
 |-------------------|--------------------------------------------------------|
 | Limit             | 20 calls per second (`POKEAPI_RATE_LIMIT`)             |
-| Waiting           | Up to 500 ms for a permit, then `429 Too Many Requests` |
+| Waiting           | Up to 3 s for a permit, then `429 Too Many Requests`   |
+
+The 3-second wait exists for catalogue browsing. An uncached page of 50 needs 51 PokeAPI calls, which is more
+than one second's quota. With a short wait, the later calls would fail with `429` partway through the page.
+With 3 seconds, the extra calls wait for the next refresh periods instead. If you lower `POKEAPI_RATE_LIMIT`,
+consider lowering `CATALOG_MAX_PAGE_SIZE` too.
 
 ### Tuning
 
@@ -352,6 +439,8 @@ variable.
 | `POKEAPI_BASE_URL`  | `pokeapi.base-url`           | `https://pokeapi.co/api/v2`              |
 | `POKEMON_CACHE_TTL` | `app.cache.pokemon-ttl`      | `1h` (any `Duration`, e.g. `30m`, `PT2H`) |
 | `POKEAPI_RATE_LIMIT`| `resilience4j.ratelimiter.instances.pokeapi.limit-for-period` | `20` (calls per second) |
+| `CATALOG_DEFAULT_PAGE_SIZE` | `app.catalog.default-page-size` | `20` |
+| `CATALOG_MAX_PAGE_SIZE`     | `app.catalog.max-page-size`     | `50` |
 
 You can also set `pokeapi.connect-timeout` (default `5s`) and `pokeapi.read-timeout` (default `10s`).
 For retry, circuit breaker and rate limiter settings, see [Resilience](#resilience). For Swagger UI and
@@ -377,9 +466,11 @@ Reports are written to `build/reports/tests/test/index.html` and
 | Test                   | What it covers                                                                       |
 |------------------------|--------------------------------------------------------------------------------------|
 | `PokemonServiceTest`   | Read-through logic with mocked `PokeApiClient` and repository (`@Mock`, `@Spy`, `@InjectMocks`, BDD `given`/`verify`) |
-| `PokemonControllerTest`| `@WebMvcTest` slice with `@MockitoBean` service: JSON shape, 400/404/429/502/503 mapping, paging |
-| `PokeApiClientTest`    | `RestClient` against `MockRestServiceServer`: deserialization, 404 → `PokemonNotFoundException`, 5xx → `PokeApiException` |
-| `PokemonMapperTest`    | DTO/entity/response mapping, type ordering, null-safety                              |
+| `PokemonCatalogServiceTest` | Page building from the catalogue listing, offset and metadata calculation, partial last page, past-the-end, offset overflow, whole page failing with the original exception |
+| `PokemonSummaryLoaderTest`  | Fetches by id, maps to a catalogue entry, propagates client errors |
+| `PokemonControllerTest`| `@WebMvcTest` slice with `@MockitoBean` services: JSON shape, default and custom paging, 400 for invalid paging (parameterized), 400/404/429/502/503 mapping |
+| `PokeApiClientTest`    | `RestClient` against `MockRestServiceServer`: deserialization (including abilities), catalogue listing, 404 → `PokemonNotFoundException`, 5xx → `PokeApiException` |
+| `PokemonMapperTest`    | DTO/entity/response mapping, type and ability ordering, hectograms → kilograms, null-safety |
 
 ### Integration tests (Testcontainers)
 
@@ -393,7 +484,7 @@ Container setup lives in `src/integrationTest/java/.../support`:
 - `IntegrationTestConfiguration` combines the above and uses a `DynamicPropertyRegistrar` to point
   `pokeapi.base-url` at WireMock.
 - `AbstractApiIntegrationTest` is the base class for full-stack tests. It enables MockMvc and the
-  `integration` profile. Before each test it clears the database, the Redis cache, WireMock's request
+  `integration` profile. Before each test it clears the database, all Redis caches, WireMock's request
   journal and the circuit breaker.
 
 The containers are static, JVM-wide singletons, so they start **once per test run**. Every Spring test
@@ -405,7 +496,8 @@ recorded calls.
 
 | Test                               | What it covers                                                     |
 |------------------------------------|--------------------------------------------------------------------|
-| `PokemonApiIntegrationTest`        | HTTP → service → Redis/PostgreSQL → WireMock. Checks that the first call hits PokeAPI, the second is served from cache, a DB fallback works after the cache is cleared, 404/502 handling, listing, and actuator health |
+| `PokemonApiIntegrationTest`        | HTTP → service → Redis/PostgreSQL → WireMock. Checks that the first call hits PokeAPI, the second is served from cache, a DB fallback works after the cache is cleared, 404/502 handling, and actuator health |
+| `PokemonCatalogIntegrationTest`    | Browsing a 3-Pokémon WireMock catalogue: entries and metadata, partial last page, a repeated page served from Redis with no PokeAPI calls, entries reused across page sizes, a cached page served while the circuit is open, `503` for an uncached page while open, past-the-end, invalid paging |
 | `PokeApiResilienceIntegrationTest` | A 5xx is retried 3 times. A 404 is neither retried nor counted by the circuit breaker. Repeated failures open the circuit, and later calls get `503` without reaching PokeAPI (checked through `/actuator/circuitbreakers`). Cached data is still served while the circuit is open |
 | `PokeApiRateLimiterIntegrationTest`| Uses its own context with a quota of 2 calls that doesn't refresh. The third upstream call gets `429` and never reaches WireMock, while cached Pokémon are still served |
 | `OpenApiIntegrationTest`           | `/v3/api-docs` has the expected metadata, operations, documented error responses and paging parameters, and excludes actuator. Swagger UI is served |
@@ -413,7 +505,8 @@ recorded calls.
 
 To add a PokeAPI stub, put a mapping in `wiremock/mappings/` and, if needed, a body file in
 `wiremock/__files/`. The catch-all `not-found.json` mapping has lower priority, so any path without its
-own stub returns 404.
+own stub returns 404. The catalogue stubs (`catalogue-offset-*-limit-*.json`) match on the `offset` and
+`limit` query parameters and describe a 3-Pokémon catalogue.
 
 ## Database migrations
 
@@ -491,6 +584,28 @@ Integrate OpenAPI/Swagger UI using springdoc-openapi and add resilience mechanis
 breaker, and rate limiting) for external PokeAPI calls. Update the README.md file with the new
 features and setup details.
 ```
+
+**3. User Story 01: Pokémon enumeration (spec → plan → implementation)**
+
+This feature used a spec-driven workflow with the project's `/spec` command
+(`.claude/commands/spec.md`) and the spec template in `_specs/template.md`.
+
+1. **Spec.** Running the command below created the branch `claude/feature/api-pokemon-list` and generated
+   [`_specs/api-pokemon-list.md`](_specs/api-pokemon-list.md). That file holds the requirements, edge cases,
+   acceptance criteria and open questions. The open questions were then answered in the spec.
+
+   ```text
+   /spec User Story 01 Pokemon Enumeration The system should allow users to browse Pokemon via
+   paginated results, displaying each entry's sprite, category, mass, and a collection of their
+   skills. Also, implement caching for service responses.
+   ```
+
+2. **Plan.** An implementation plan was created from the spec and saved to
+   [`_plans/api-pokemon-list.md`](_plans/api-pokemon-list.md). It covers the design decisions, caching
+   and resilience approach, step-by-step tasks, affected files and risks.
+
+3. **Implementation.** The plan was implemented as written. The result is the
+   [Browse Pokémon](#browse-pokémon) endpoint, together with its unit and integration tests.
 
 All generated code was reviewed. The full test suite (unit and Testcontainers integration tests)
 passes, and the app was smoke-tested against the real PokeAPI using Docker Compose.

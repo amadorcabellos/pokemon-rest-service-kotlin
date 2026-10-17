@@ -1,6 +1,7 @@
 package com.ballastlane.poke.client;
 
 import com.ballastlane.poke.client.dto.PokeApiPokemon;
+import com.ballastlane.poke.client.dto.PokeApiPokemonList;
 import com.ballastlane.poke.exception.PokeApiException;
 import com.ballastlane.poke.exception.PokemonNotFoundException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
@@ -53,6 +54,26 @@ public class PokeApiClient {
 		}
 		catch (RestClientException ex) {
 			throw new PokeApiException("Failed to fetch pokemon '%s' from PokeAPI".formatted(nameOrId), ex);
+		}
+	}
+
+	/**
+	 * Fetches one page of the PokeAPI catalogue (names, detail URLs and the total count), ordered by id.
+	 */
+	@Retry(name = RESILIENCE_INSTANCE)
+	@CircuitBreaker(name = RESILIENCE_INSTANCE)
+	@RateLimiter(name = RESILIENCE_INSTANCE)
+	public PokeApiPokemonList fetchPokemonPage(int offset, int limit) {
+		log.debug("Fetching pokemon catalogue page offset={} limit={} from PokeAPI", offset, limit);
+		try {
+			return restClient.get()
+					.uri("/pokemon?offset={offset}&limit={limit}", offset, limit)
+					.retrieve()
+					.body(PokeApiPokemonList.class);
+		}
+		catch (RestClientException ex) {
+			throw new PokeApiException(
+					"Failed to fetch pokemon catalogue (offset=%d, limit=%d) from PokeAPI".formatted(offset, limit), ex);
 		}
 	}
 

@@ -29,6 +29,9 @@ pokeapi:
 app:
   cache:
     pokemon-ttl: ${POKEMON_CACHE_TTL:1h}
+  catalog:
+    default-page-size: ${CATALOG_DEFAULT_PAGE_SIZE:20}
+    max-page-size: ${CATALOG_MAX_PAGE_SIZE:50}
 
 resilience4j:
   # Applied to PokeApiClient#fetchPokemon. Order: Retry -> CircuitBreaker -> RateLimiter -> HTTP call.
@@ -64,7 +67,8 @@ resilience4j:
       pokeapi:
         limit-for-period: ${POKEAPI_RATE_LIMIT:20}
         limit-refresh-period: 1s
-        timeout-duration: 500ms
+        # Long enough for an uncached catalogue page (up to 51 calls) to wait through a couple of refresh periods.
+        timeout-duration: 3s
 
 springdoc:
   api-docs:

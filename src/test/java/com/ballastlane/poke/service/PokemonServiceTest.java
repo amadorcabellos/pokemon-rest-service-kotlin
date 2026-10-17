@@ -23,8 +23,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
 
 @ExtendWith(MockitoExtension.class)
 class PokemonServiceTest {
@@ -68,7 +66,8 @@ class PokemonServiceTest {
 	void fetchesFromPokeApiAndStoresWhenMissingLocally() {
 		PokeApiPokemon remote = new PokeApiPokemon(25, "pikachu", 4, 60, 112,
 				new PokeApiPokemon.Sprites("sprite.png"),
-				List.of(new PokeApiPokemon.TypeSlot(1, new PokeApiPokemon.NamedResource("electric", null))));
+				List.of(new PokeApiPokemon.TypeSlot(1, new PokeApiPokemon.NamedResource("electric", null))),
+				List.of());
 		given(pokemonRepository.findByNameIgnoreCase("pikachu")).willReturn(Optional.empty());
 		given(pokeApiClient.fetchPokemon("pikachu")).willReturn(remote);
 		given(pokemonRepository.save(any(Pokemon.class))).willAnswer(invocation -> invocation.getArgument(0));
@@ -88,17 +87,6 @@ class PokemonServiceTest {
 		assertThatThrownBy(() -> pokemonService.getPokemon("missingno"))
 				.isInstanceOf(PokemonNotFoundException.class);
 		verify(pokemonRepository, never()).save(any());
-	}
-
-	@Test
-	void listsStoredPokemon() {
-		PageRequest pageable = PageRequest.of(0, 10);
-		given(pokemonRepository.findAll(pageable)).willReturn(new PageImpl<>(List.of(pikachu), pageable, 1));
-
-		var page = pokemonService.listStored(pageable);
-
-		assertThat(page.getTotalElements()).isEqualTo(1);
-		assertThat(page.getContent()).extracting(PokemonResponse::name).containsExactly("pikachu");
 	}
 
 }

@@ -1,5 +1,6 @@
 package com.ballastlane.poke.web;
 
+import com.ballastlane.poke.exception.InvalidPageRequestException;
 import com.ballastlane.poke.exception.PokeApiException;
 import com.ballastlane.poke.exception.PokemonNotFoundException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -11,6 +12,7 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /**
  * Maps domain exceptions to RFC 9457 problem details.
@@ -52,6 +54,16 @@ public class GlobalExceptionHandler {
 				.findFirst()
 				.orElse("Invalid request");
 		return problem(HttpStatus.BAD_REQUEST, "Invalid request", detail);
+	}
+
+	@ExceptionHandler(InvalidPageRequestException.class)
+	ProblemDetail handleInvalidPage(InvalidPageRequestException ex) {
+		return problem(HttpStatus.BAD_REQUEST, "Invalid request", ex.getMessage());
+	}
+
+	@ExceptionHandler(MethodArgumentTypeMismatchException.class)
+	ProblemDetail handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+		return problem(HttpStatus.BAD_REQUEST, "Invalid request", "'%s' must be a number".formatted(ex.getName()));
 	}
 
 	private static ProblemDetail problem(HttpStatus status, String title, String detail) {

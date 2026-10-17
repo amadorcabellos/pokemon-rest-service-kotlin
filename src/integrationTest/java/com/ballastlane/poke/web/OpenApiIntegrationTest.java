@@ -19,7 +19,11 @@ class OpenApiIntegrationTest extends AbstractApiIntegrationTest {
 				.andExpect(jsonPath("$.paths['/api/v1/pokemon/{nameOrId}'].get.summary")
 						.value("Get a pokemon by name or id"))
 				.andExpect(jsonPath("$.paths['/api/v1/pokemon/{nameOrId}'].get.responses['503']").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/pokemon'].get.summary").value("Browse pokemon"))
 				.andExpect(jsonPath("$.paths['/api/v1/pokemon'].get.parameters[?(@.name == 'page')]").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/pokemon'].get.parameters[?(@.name == 'size')]").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/pokemon'].get.responses['400']").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/pokemon'].get.responses['503']").exists())
 				.andExpect(jsonPath("$.paths['/actuator/health']").doesNotExist());
 	}
 
