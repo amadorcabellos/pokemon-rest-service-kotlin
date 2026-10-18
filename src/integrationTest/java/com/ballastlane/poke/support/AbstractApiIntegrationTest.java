@@ -3,6 +3,7 @@ package com.ballastlane.poke.support;
 import com.ballastlane.poke.client.PokeApiClient;
 import com.ballastlane.poke.config.CacheConfig;
 import com.ballastlane.poke.repository.PokemonRepository;
+import com.ballastlane.poke.repository.SyncRunRepository;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +33,9 @@ public abstract class AbstractApiIntegrationTest {
 	protected PokemonRepository repository;
 
 	@Autowired
+	protected SyncRunRepository syncRunRepository;
+
+	@Autowired
 	protected CacheManager cacheManager;
 
 	@Autowired
@@ -42,7 +46,9 @@ public abstract class AbstractApiIntegrationTest {
 
 	@BeforeEach
 	void resetState() {
+		// Proprietary rows go with their pokemon, and run failures with their run (ON DELETE CASCADE).
 		repository.deleteAll();
+		syncRunRepository.deleteAllInBatch();
 		cacheManager.getCacheNames().forEach(name -> cacheManager.getCache(name).invalidate());
 		pokeApi.resetRequests();
 		pokeApiCircuitBreaker().reset();

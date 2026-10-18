@@ -32,6 +32,14 @@ app:
   catalog:
     default-page-size: ${CATALOG_DEFAULT_PAGE_SIZE:20}
     max-page-size: ${CATALOG_MAX_PAGE_SIZE:50}
+  sync:
+    batch-size: ${SYNC_BATCH_SIZE:50}
+    delay-between-pokemon: ${SYNC_DELAY_BETWEEN_POKEMON:100ms}
+    pause-when-rejected: ${SYNC_PAUSE_WHEN_REJECTED:5s}
+    max-consecutive-pauses: ${SYNC_MAX_CONSECUTIVE_PAUSES:12}
+    schedule:
+      enabled: ${SYNC_SCHEDULE_ENABLED:false}
+      cron: ${SYNC_SCHEDULE_CRON:0 0 3 * * *}
 
 resilience4j:
   # Applied to PokeApiClient#fetchPokemon. Order: Retry -> CircuitBreaker -> RateLimiter -> HTTP call.

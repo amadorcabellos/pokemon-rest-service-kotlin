@@ -26,6 +26,17 @@ class OpenApiIntegrationTest extends AbstractApiIntegrationTest {
 				.andExpect(jsonPath("$.paths['/api/v1/pokemon'].get.parameters[?(@.name == 'size')]").exists())
 				.andExpect(jsonPath("$.paths['/api/v1/pokemon'].get.responses['400']").exists())
 				.andExpect(jsonPath("$.paths['/api/v1/pokemon'].get.responses['503']").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/admin/sync/runs'].post.summary")
+						.value("Start a full synchronization"))
+				.andExpect(jsonPath("$.paths['/api/v1/admin/sync/runs'].post.responses['202']").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/admin/sync/runs'].post.responses['409']").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/admin/sync/runs/latest'].get.responses['404']").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/admin/sync/runs/{runId}'].get.responses['404']").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/admin/sync/pokemon/{nameOrId}'].post.summary")
+						.value("Synchronize one pokemon"))
+				.andExpect(jsonPath("$.paths['/api/v1/admin/sync/pokemon/{nameOrId}'].post.responses['503']")
+						.exists())
+				.andExpect(jsonPath("$.components.schemas.SyncRunReport.properties.failures").exists())
 				.andExpect(jsonPath("$.paths['/actuator/health']").doesNotExist());
 	}
 

@@ -16,3 +16,10 @@ resilience4j:
     instances:
       pokeapi:
         limit-for-period: 1000
+
+app:
+  sync:
+    batch-size: 2
+    delay-between-pokemon: 0ms
+    pause-when-rejected: 10ms
+    max-consecutive-pauses: 2

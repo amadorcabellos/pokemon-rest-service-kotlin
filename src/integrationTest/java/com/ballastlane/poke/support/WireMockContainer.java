@@ -22,6 +22,8 @@ public class WireMockContainer extends GenericContainer<WireMockContainer> {
 
 	private static final Pattern COUNT = Pattern.compile("\"count\"\\s*:\\s*(\\d+)");
 
+	private static final Pattern ID = Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"");
+
 	private final HttpClient httpClient = HttpClient.newHttpClient();
 
 	public WireMockContainer() {
@@ -50,6 +52,25 @@ public class WireMockContainer extends GenericContainer<WireMockContainer> {
 			throw new IllegalStateException("Unexpected WireMock response: " + response);
 		}
 		return Integer.parseInt(matcher.group(1));
+	}
+
+	/**
+	 * Registers a stub mapping at runtime (WireMock mapping JSON) and returns its id, for {@link #removeStub}.
+	 */
+	public String addStub(String mappingJson) {
+		String response = send(HttpRequest.newBuilder(URI.create(getBaseUrl() + "/__admin/mappings"))
+				.POST(HttpRequest.BodyPublishers.ofString(mappingJson))
+				.header("Content-Type", "application/json")
+				.build());
+		Matcher matcher = ID.matcher(response);
+		if (!matcher.find()) {
+			throw new IllegalStateException("Unexpected WireMock response: " + response);
+		}
+		return matcher.group(1);
+	}
+
+	public void removeStub(String stubId) {
+		send(HttpRequest.newBuilder(URI.create(getBaseUrl() + "/__admin/mappings/" + stubId)).DELETE().build());
 	}
 
 	public void resetRequests() {

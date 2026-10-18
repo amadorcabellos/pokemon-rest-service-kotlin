@@ -3,7 +3,9 @@
 A Spring Boot REST API that serves Pokémon data from [PokeAPI](https://pokeapi.co). It caches responses in
 **Redis** and records looked-up Pokémon in **PostgreSQL**. You can look up a detailed view of one Pokémon
 (image, base stats, description and evolution chain), and browse the full PokeAPI catalogue page by page,
-with each entry's sprite, category, mass and skills. Calls to PokeAPI are protected by **Resilience4j** (retry,
+with each entry's sprite, category, mass and skills. Admin endpoints synchronize the PokeAPI catalogue into
+PostgreSQL, where it sits next to proprietary data (localized names, geographical metadata and tags) that
+a sync never overwrites. Calls to PokeAPI are protected by **Resilience4j** (retry,
 circuit breaker and rate limiter). The API is documented with **OpenAPI 3** and **Swagger UI**.
 
 Built with Java 21, Spring Boot 4.1 and Gradle 9.
@@ -32,7 +34,8 @@ Built with Java 21, Spring Boot 4.1 and Gradle 9.
 
 ## Architecture
 
-The API has two read paths: looking up a single Pokémon, and browsing the catalogue.
+The API has two read paths, looking up a single Pokémon and browsing the catalogue, plus an admin path
+that [synchronizes PokeAPI into PostgreSQL](#data-synchronization).
 
 ### Pokémon details lookup
 
@@ -115,6 +118,53 @@ Error mapping (both paths):
 
 All error responses are [Problem Details](https://www.rfc-editor.org/rfc/rfc9457) (`application/problem+json`).
 
+### Data synchronization
+
+```
+POST /api/v1/admin/sync/runs ──► SyncRunStore.start ──► sync_run row (RUNNING)   ──► 202 + Location
+                                      │                  unique index: one RUNNING run at a time (else 409)
+                                      ▼
+                          FullSyncRunner (background, applicationTaskExecutor)
+                                      │  for each catalogue page (app.sync.batch-size):
+                                      │    for each pokemon, one at a time:
+                                      │      PokeApiClient.fetchPokemon (retry, circuit breaker, rate limiter)
+                                      │      PokemonSyncWriter.upsert   (own transaction, match on PokeAPI id)
+                                      │      wait app.sync.delay-between-pokemon
+                                      │    save counts and failures to sync_run
+                                      ▼
+                          sync_run: COMPLETED | COMPLETED_WITH_ERRORS | FAILED
+
+POST /api/v1/admin/sync/pokemon/{nameOrId} ──► fetchPokemon ──► PokemonSyncWriter.upsert ──► 200
+```
+
+The local store separates two kinds of data:
+
+- **Upstream data** belongs to PokeAPI: the `pokemon` row (name, height, weight, base experience, sprite,
+  species, `last_synced_at`) and its `pokemon_type`, `pokemon_stat` and `pokemon_ability` rows. The sync
+  creates and refreshes it.
+- **Proprietary data** belongs to this service: `pokemon_localized_name` (one name per locale),
+  `pokemon_geo_metadata` (region, area or habitat, with an optional note) and `pokemon_tag` (lowercase, unique
+  per Pokémon). Each table points at `pokemon.id`. The `Pokemon` entity deliberately has no mapping to these
+  tables, so saving a Pokémon can never cascade into them. Syncs and lookups never change or delete them.
+
+How a sync behaves:
+
+- **Idempotent.** Pokémon are matched on their PokeAPI id. Running a sync again updates rows instead of adding
+  new ones, and a renamed Pokémon keeps its row. Rows recorded earlier by a lookup are filled in.
+- **Partial failures.** A Pokémon that PokeAPI can't return (for example a 404, or a 5xx after retries) is
+  recorded in the run's `failures` and skipped. Its old row is kept, and the run ends as `COMPLETED_WITH_ERRORS`.
+- **Back-pressure.** When the circuit breaker or rate limiter rejects a call, the sync waits
+  `app.sync.pause-when-rejected` and retries the same call. After `app.sync.max-consecutive-pauses`
+  rejections in a row it stops as `FAILED`. Pokémon already synchronized are kept.
+- **Fair use of the rate limit.** The sync and normal API traffic share the `pokeapi` rate limiter. The default
+  delay of 100 ms between Pokémon keeps the sync to about half of the 20 calls/s quota. A full sync of
+  around 1,300 Pokémon takes a few minutes.
+- **Restarts.** On startup, a run left `RUNNING` by a previous instance is marked `INTERRUPTED`. This assumes
+  a single application instance.
+- **Scheduling.** A scheduled full sync can run on `app.sync.schedule.cron`. It is disabled by default
+  (`SYNC_SCHEDULE_ENABLED=false`), and is skipped while another sync is running. Nothing syncs on startup.
+- **Caches.** A sync only writes PostgreSQL. The public endpoints keep reading from PokeAPI and Redis.
+
 ## Tech stack
 
 | Concern            | Choice                                                         |
@@ -149,6 +199,7 @@ All error responses are [Problem Details](https://www.rfc-editor.org/rfc/rfc9457
     │   │   ├── mapper/              # PokeAPI DTO ⇄ entity ⇄ response
     │   │   ├── repository/          # Spring Data JPA repositories
     │   │   ├── service/             # details + catalogue services and cached loaders
+    │   │   ├── sync/                # PokeAPI → PostgreSQL synchronization (single and full runs)
     │   │   └── web/                 # controllers (OpenAPI-annotated), DTOs, exception handler
     │   └── resources
     │       ├── application.yml
@@ -163,6 +214,7 @@ All error responses are [Problem Details](https://www.rfc-editor.org/rfc/rfc9457
         │   ├── catalog/             # catalogue browsing and caching tests
         │   ├── repository/          # @DataJpaTest against real PostgreSQL
         │   ├── resilience/          # retry, circuit breaker and rate limiter tests
+        │   ├── sync/                # full and single synchronization tests
         │   └── web/                 # full-stack API and OpenAPI tests
         └── resources
             ├── application-integration.yml  # fast resilience settings for tests
@@ -213,7 +265,7 @@ also run that class from your IDE.
 
 ## API
 
-Base path: `/api/v1/pokemon`
+Base paths: `/api/v1/pokemon` (public) and `/api/v1/admin/sync` (admin)
 
 ### Get Pokémon details by name or id
 
@@ -358,6 +410,64 @@ Both caches share the `POKEMON_CACHE_TTL` expiry (default 1 hour), so the catalo
 least that often. The first request for a page of 20 makes up to 21 PokeAPI calls. Repeating that page makes
 none. Concurrent requests for the same uncached page or entry are de-duplicated within one app instance.
 
+### Admin: synchronization
+
+These endpoints sit under `/api/v1/admin/**`, so they can be protected separately. They have no
+authentication yet.
+
+| Method and path                               | Purpose                                         | Responses |
+|-----------------------------------------------|-------------------------------------------------|-----------|
+| `POST /api/v1/admin/sync/runs`                | Start a full sync in the background             | `202` with a `Location` header, `409` if one is running |
+| `GET /api/v1/admin/sync/runs/latest`          | Status of the most recent full sync             | `200`, `404` if none has run |
+| `GET /api/v1/admin/sync/runs/{runId}`         | Status of one full sync                         | `200`, `400`, `404` |
+| `POST /api/v1/admin/sync/pokemon/{nameOrId}`  | Synchronize one Pokémon now                     | `200`, `400`, `404`, `429`, `502`, `503` |
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/admin/sync/runs
+curl http://localhost:8080/api/v1/admin/sync/runs/latest
+```
+
+```json
+{
+  "id": 1,
+  "trigger": "API",
+  "status": "COMPLETED_WITH_ERRORS",
+  "startedAt": "2026-10-17T10:00:00Z",
+  "finishedAt": "2026-10-17T10:04:12Z",
+  "catalogueCount": 1302,
+  "created": 1301,
+  "updated": 0,
+  "failed": 1,
+  "failures": [
+    { "name": "missingno", "reason": "Pokemon '9998' was not found" }
+  ]
+}
+```
+
+`status` is `RUNNING`, `COMPLETED`, `COMPLETED_WITH_ERRORS`, `FAILED` or `INTERRUPTED`. `trigger` is `API` or
+`SCHEDULED`. Starting a second full sync while one is running returns:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Synchronization already running",
+  "status": 409,
+  "detail": "Synchronization run 1 is still running; follow it at /api/v1/admin/sync/runs/1",
+  "instance": "/api/v1/admin/sync/runs",
+  "runId": 1
+}
+```
+
+Synchronizing one Pokémon returns whether its row was `CREATED` or `UPDATED`:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/sync/pokemon/pikachu
+```
+
+```json
+{ "id": 25, "name": "pikachu", "outcome": "CREATED", "lastSyncedAt": "2026-10-17T10:05:00Z" }
+```
+
 ### Operational endpoints
 
 | Endpoint                         | Purpose                                             |
@@ -481,6 +591,12 @@ variable.
 | `POKEAPI_RATE_LIMIT`| `resilience4j.ratelimiter.instances.pokeapi.limit-for-period` | `20` (calls per second) |
 | `CATALOG_DEFAULT_PAGE_SIZE` | `app.catalog.default-page-size` | `20` |
 | `CATALOG_MAX_PAGE_SIZE`     | `app.catalog.max-page-size`     | `50` |
+| `SYNC_BATCH_SIZE`             | `app.sync.batch-size`             | `50` (catalogue entries per page, 1 to 100) |
+| `SYNC_DELAY_BETWEEN_POKEMON`  | `app.sync.delay-between-pokemon`  | `100ms` |
+| `SYNC_PAUSE_WHEN_REJECTED`    | `app.sync.pause-when-rejected`    | `5s` |
+| `SYNC_MAX_CONSECUTIVE_PAUSES` | `app.sync.max-consecutive-pauses` | `12` |
+| `SYNC_SCHEDULE_ENABLED`       | `app.sync.schedule.enabled`       | `false` |
+| `SYNC_SCHEDULE_CRON`          | `app.sync.schedule.cron`          | `0 0 3 * * *` (Spring cron, daily at 03:00) |
 
 You can also set `pokeapi.connect-timeout` (default `5s`) and `pokeapi.read-timeout` (default `10s`).
 For retry, circuit breaker and rate limiter settings, see [Resilience](#resilience). For Swagger UI and
@@ -512,7 +628,14 @@ Reports are written to `build/reports/tests/test/index.html` and
 | `PokemonSummaryLoaderTest`  | Fetches by id, maps to a catalogue entry, propagates client errors |
 | `PokemonControllerTest`| `@WebMvcTest` slice with `@MockitoBean` services: details and page JSON shape, default and custom paging, 400 for invalid paging (parameterized), 400/404/429/502/503 mapping |
 | `PokeApiClientTest`    | `RestClient` against `MockRestServiceServer`: deserialization (abilities, stats, artwork, species link), species and evolution chain parsing, catalogue listing, 404 → `PokemonNotFoundException`, 5xx → `PokeApiException` |
-| `PokemonMapperTest`    | DTO → entity and catalogue entry mapping, type and ability ordering, hectograms → kilograms, null-safety |
+| `PokemonMapperTest`    | DTO → entity (types, stats, abilities, species) and catalogue entry mapping, type and ability ordering, hectograms → kilograms, null-safety |
+| `PokemonTest`          | `copyUpstreamFrom` replaces upstream fields only and keeps identity and timestamps; tags are lowercased |
+| `PokemonSyncWriterTest`| Creates new Pokémon, updates stored ones matched by PokeAPI id (including renames), retries as an update after a concurrent insert |
+| `PokemonSyncServiceTest` | Single sync normalizes input and propagates 404; a full sync is recorded then run in the background; no run when one is already running; missing runs give `SyncRunNotFoundException` |
+| `FullSyncRunnerTest`   | Walks every page and counts created/updated; records failures and carries on; pauses and retries when the circuit is open; fails after too many rejections or when the catalogue can't be read; never leaves a run `RUNNING` |
+| `ScheduledSyncTest`    | Disabled by default, starts a `SCHEDULED` run when enabled, skips when a run is already running |
+| `SyncRunRecoveryTest`  | Marks leftover `RUNNING` runs as interrupted on startup |
+| `SyncControllerTest`   | `@WebMvcTest` slice: `202` with `Location`, `409` with `runId`, run and latest run (`200`/`404`), single sync `200`/`400`/`404` |
 
 ### Integration tests (Testcontainers)
 
@@ -543,14 +666,18 @@ recorded calls.
 | `PokeApiResilienceIntegrationTest` | A 5xx is retried 3 times. A 404 is neither retried nor counted by the circuit breaker. Repeated failures open the circuit, and later calls get `503` without reaching PokeAPI (checked through `/actuator/circuitbreakers`). Cached data is still served while the circuit is open |
 | `PokeApiRateLimiterIntegrationTest`| Uses its own context with a quota of 6 calls that doesn't refresh, enough for two detail lookups (3 calls each). The next upstream call gets `429` and never reaches WireMock, while cached Pokémon are still served |
 | `OpenApiIntegrationTest`           | `/v3/api-docs` has the expected metadata, operations, documented error responses and paging parameters, and excludes actuator. Swagger UI is served |
-| `PokemonRepositoryIntegrationTest` | `@DataJpaTest` against real PostgreSQL with Flyway: queries, type ordering, unique constraints |
+| `PokemonRepositoryIntegrationTest` | `@DataJpaTest` against real PostgreSQL with Flyway: queries, type, stat and ability ordering, unique constraints, rows written before V2 still load, proprietary data constraints (one name per locale, unique lowercase tags), only one `RUNNING` sync run |
+| `PokemonSyncIntegrationTest`       | A full sync of the 3-Pokémon WireMock catalogue stores every replicated field; a second run creates no duplicates; proprietary data survives full syncs, single syncs and lookups; a lookup-recorded row is completed, not duplicated; an upstream 404 gives `COMPLETED_WITH_ERRORS` with the failed name; a second start while running gives `409`; run status endpoints; single sync `200`/`404`/`400`. Runs are polled with Awaitility |
 
 To add a PokeAPI stub, put a mapping in `wiremock/mappings/` and, if needed, a body file in
 `wiremock/__files/`. The catch-all `not-found.json` mapping has lower priority, so any path without its
 own stub returns 404. Details lookups also need `pokemon-species` and `evolution-chain` stubs (for example
 `pikachu-species.json` and `evolution-chain-10.json`). The `broken` Pokémon links to a species stub that
 always returns 503. The catalogue stubs (`catalogue-offset-*-limit-*.json`) match on the `offset` and
-`limit` query parameters and describe a 3-Pokémon catalogue.
+`limit` query parameters and describe a 3-Pokémon catalogue. The `integration` profile sets
+`app.sync.batch-size: 2`, so a full sync reads two catalogue pages. Tests that need a different PokeAPI
+response for a while (for example a slow or failing Pokémon) register a temporary stub with
+`WireMockContainer#addStub` and remove it afterwards with `removeStub`.
 
 ## Database migrations
 
@@ -558,9 +685,18 @@ Flyway manages the schema. Hibernate runs with `ddl-auto: validate`, so it check
 schema but never changes it.
 
 - `V1__create_pokemon_tables.sql` creates the `pokemon` table and the `pokemon_type` table (ordered by slot).
+- `V2__pokemon_sync.sql` adds the species and `last_synced_at` columns to `pokemon`, and the
+  `pokemon_stat` and `pokemon_ability` tables (upstream data). It also adds the proprietary
+  `pokemon_localized_name`, `pokemon_geo_metadata` and `pokemon_tag` tables, and the `sync_run` and
+  `sync_run_failure` tables. Rows from V1 stay valid, and the next sync fills in their new fields.
 
-The details lookup inserts a row the first time it sees a Pokémon, and skips it if one already exists. The
-detailed view (stats, description, evolution) is only cached in Redis, never stored.
+The details lookup inserts a row the first time it sees a Pokémon, and skips it if one already exists, so it
+never overwrites anything. The detailed view (description, evolution) is only cached in Redis, never stored.
+See [Data synchronization](#data-synchronization) for the upstream/proprietary split.
+
+**Adding a new kind of proprietary data:** create a table with a `pokemon_id BIGINT NOT NULL REFERENCES
+pokemon (id) ON DELETE CASCADE` column in a new migration, plus an entity with a `@ManyToOne Pokemon` and a
+repository. Don't map it from `Pokemon`, so the sync can never touch it. The upstream tables don't change.
 
 To change the schema, add a new file named `src/main/resources/db/migration/V{n}__description.sql`. Don't
 edit migrations that have already been applied.
@@ -605,7 +741,10 @@ This is a skeleton. Some natural extensions:
 
 - A fallback that serves stale data when PokeAPI is unavailable (for example, a longer-lived "stale" cache)
 - Retry-After headers on `429`/`503` responses, based on the rate limiter and circuit breaker state
-- Handling of concurrent first-time fetches of the same Pokémon (upsert on the unique constraint)
+- Endpoints to manage proprietary data (localized names, geographical metadata, tags), and returning it in
+  the public responses
+- Authentication for the `/api/v1/admin/**` endpoints
+- Distributed locking and recovery for full syncs across several application instances
 - CI pipeline (GitHub Actions) that runs `./gradlew build`
 - Observability: Micrometer metrics, tracing, structured logging
 
@@ -673,6 +812,32 @@ This feature used a spec-driven workflow with the project's `/spec` command
 3. **Implementation.** The plan was implemented as written. The result is the
    [Pokémon details](#get-pokémon-details-by-name-or-id) response of `GET /api/v1/pokemon/{nameOrId}`,
    together with its unit and integration tests.
+
+**5. User Story 03: Data synchronization (spec → plan → implementation)**
+
+1. **Spec.** Running the command below created the branch `claude/feature/pokemon-data-sync` and generated
+   [`_specs/pokemon-data-sync.md`](_specs/pokemon-data-sync.md). All its open questions were answered with
+   the suggested defaults.
+
+   ```text
+   /spec User Story 03 Data Synchronization Develop a mechanism to persist Pokemon data into a local
+   relational store. This replication layer is intended to facilitate the addition of proprietary
+   fields. Use cases include localized nomenclature, geographical metadata, or internal classification
+   tags.
+   ```
+
+2. **Plan.** An implementation plan was created from the spec and saved to
+   [`_plans/pokemon-data-sync.md`](_plans/pokemon-data-sync.md). It covers the decisions, the data model with
+   the upstream/proprietary split, the sync components, the admin API, step-by-step tasks, affected files and
+   risks.
+
+3. **Implementation.** The plan was implemented with small deviations:
+   - a `SyncRunStore` component holds the run bookkeeping
+   - the new stat and ability tables are ordered by a `slot` column, like `pokemon_type`
+   - the response DTOs follow the existing naming without a `Response` suffix: `SyncRunReport` and
+     `SyncedPokemon`
+   The result is the [Data synchronization](#data-synchronization) feature and its
+   [admin endpoints](#admin-synchronization), together with their unit and integration tests.
 
 All generated code was reviewed. The full test suite (unit and Testcontainers integration tests)
 passes, and the app was smoke-tested against the real PokeAPI using Docker Compose.

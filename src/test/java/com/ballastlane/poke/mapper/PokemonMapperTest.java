@@ -6,8 +6,11 @@ import com.ballastlane.poke.client.dto.PokeApiPokemon;
 import com.ballastlane.poke.client.dto.PokeApiPokemon.AbilitySlot;
 import com.ballastlane.poke.client.dto.PokeApiPokemon.NamedResource;
 import com.ballastlane.poke.client.dto.PokeApiPokemon.Sprites;
+import com.ballastlane.poke.client.dto.PokeApiPokemon.StatSlot;
 import com.ballastlane.poke.client.dto.PokeApiPokemon.TypeSlot;
 import com.ballastlane.poke.domain.Pokemon;
+import com.ballastlane.poke.domain.PokemonAbility;
+import com.ballastlane.poke.domain.PokemonStat;
 import com.ballastlane.poke.web.dto.PokemonSummary;
 import com.ballastlane.poke.web.dto.Skill;
 import java.math.BigDecimal;
@@ -34,6 +37,25 @@ class PokemonMapperTest {
 	}
 
 	@Test
+	void toEntityMapsStatsAbilitiesAndSpecies() {
+		PokeApiPokemon source = new PokeApiPokemon(25, "pikachu", 4, 60, 112, null, List.of(),
+				List.of(new AbilitySlot(3, true, new NamedResource("lightning-rod", null)),
+						new AbilitySlot(1, false, new NamedResource("static", null))),
+				List.of(new StatSlot(35, new NamedResource("hp", null)),
+						new StatSlot(90, new NamedResource("speed", null))),
+				new NamedResource("pikachu", "https://pokeapi.co/api/v2/pokemon-species/25/"));
+
+		Pokemon entity = mapper.toEntity(source);
+
+		assertThat(entity.getStats()).containsExactly(new PokemonStat("hp", 35), new PokemonStat("speed", 90));
+		assertThat(entity.getAbilities()).containsExactly(new PokemonAbility("static", false),
+				new PokemonAbility("lightning-rod", true));
+		assertThat(entity.getSpeciesId()).isEqualTo(25);
+		assertThat(entity.getSpeciesName()).isEqualTo("pikachu");
+		assertThat(entity.getLastSyncedAt()).isNull();
+	}
+
+	@Test
 	void toEntityHandlesMissingOptionalFields() {
 		PokeApiPokemon source = new PokeApiPokemon(132, "ditto", 3, 40, null, null, null, null, null, null);
 
@@ -42,6 +64,9 @@ class PokemonMapperTest {
 		assertThat(entity.getSpriteUrl()).isNull();
 		assertThat(entity.getBaseExperience()).isNull();
 		assertThat(entity.getTypes()).isEmpty();
+		assertThat(entity.getStats()).isEmpty();
+		assertThat(entity.getAbilities()).isEmpty();
+		assertThat(entity.getSpeciesId()).isNull();
 	}
 
 	@Test

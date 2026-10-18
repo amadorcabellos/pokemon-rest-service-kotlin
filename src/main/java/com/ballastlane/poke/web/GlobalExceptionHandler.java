@@ -3,6 +3,8 @@ package com.ballastlane.poke.web;
 import com.ballastlane.poke.exception.InvalidPageRequestException;
 import com.ballastlane.poke.exception.PokeApiException;
 import com.ballastlane.poke.exception.PokemonNotFoundException;
+import com.ballastlane.poke.exception.SyncAlreadyRunningException;
+import com.ballastlane.poke.exception.SyncRunNotFoundException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import org.slf4j.Logger;
@@ -59,6 +61,23 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler(InvalidPageRequestException.class)
 	ProblemDetail handleInvalidPage(InvalidPageRequestException ex) {
 		return problem(HttpStatus.BAD_REQUEST, "Invalid request", ex.getMessage());
+	}
+
+	@ExceptionHandler(SyncAlreadyRunningException.class)
+	ProblemDetail handleSyncAlreadyRunning(SyncAlreadyRunningException ex) {
+		Long runId = ex.getRunningRunId();
+		if (runId == null) {
+			return problem(HttpStatus.CONFLICT, "Synchronization already running", ex.getMessage());
+		}
+		ProblemDetail problem = problem(HttpStatus.CONFLICT, "Synchronization already running",
+				"%s; follow it at %s".formatted(ex.getMessage(), SyncController.runUri(runId)));
+		problem.setProperty("runId", runId);
+		return problem;
+	}
+
+	@ExceptionHandler(SyncRunNotFoundException.class)
+	ProblemDetail handleSyncRunNotFound(SyncRunNotFoundException ex) {
+		return problem(HttpStatus.NOT_FOUND, "Synchronization run not found", ex.getMessage());
 	}
 
 	@ExceptionHandler(MethodArgumentTypeMismatchException.class)
