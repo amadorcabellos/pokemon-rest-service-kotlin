@@ -865,6 +865,8 @@ variable.
 | `SYNC_SCHEDULE_ENABLED`       | `app.sync.schedule.enabled`       | `false` |
 | `SYNC_SCHEDULE_CRON`          | `app.sync.schedule.cron`          | `0 0 3 * * *` (Spring cron, daily at 03:00) |
 | `LOCAL_DATA_MAX_REQUEST_SIZE` | `app.local-data.max-request-size` | `64KB` (largest PUT/PATCH body; larger gets `413`) |
+| `CORS_ALLOWED_ORIGINS`        | `app.cors.allowed-origins`        | `http://localhost:3000` (comma-separated exact origins, no trailing slash; empty disables CORS) |
+| `CORS_MAX_AGE`                | `app.cors.max-age`                | `30m` (how long browsers cache a preflight) |
 | `JWT_SECRET`                  | `app.security.jwt-secret`         | **none**: required, at least 32 bytes; the app won't start without it |
 | `ACCESS_TOKEN_TTL`            | `app.security.access-token-ttl`   | `15m` |
 | `REFRESH_TOKEN_TTL`           | `app.security.refresh-token-ttl`  | `7d` |

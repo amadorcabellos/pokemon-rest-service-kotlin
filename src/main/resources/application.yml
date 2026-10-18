@@ -40,6 +40,10 @@ app:
     schedule:
       enabled: ${SYNC_SCHEDULE_ENABLED:false}
       cron: ${SYNC_SCHEDULE_CRON:0 0 3 * * *}
+  cors:
+    # Comma-separated exact origins; leave empty to disable cross-origin access.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+    max-age: ${CORS_MAX_AGE:30m}
   local-data:
     max-request-size: ${LOCAL_DATA_MAX_REQUEST_SIZE:64KB}
   security:

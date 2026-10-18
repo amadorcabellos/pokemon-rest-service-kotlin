@@ -3,6 +3,7 @@ package com.ballastlane.pokemon.web;
 import static org.mockito.Mockito.mock;
 
 import com.ballastlane.pokemon.config.AuthProperties;
+import com.ballastlane.pokemon.config.CorsProperties;
 import com.ballastlane.pokemon.config.SecurityConfig;
 import com.ballastlane.pokemon.repository.AuthSessionRepository;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -16,7 +17,7 @@ import org.springframework.context.annotation.Import;
  */
 @TestConfiguration
 @Import(SecurityConfig.class)
-@EnableConfigurationProperties(AuthProperties.class)
+@EnableConfigurationProperties({ AuthProperties.class, CorsProperties.class })
 public class WebSecurityTestConfiguration {
 
 	@Bean

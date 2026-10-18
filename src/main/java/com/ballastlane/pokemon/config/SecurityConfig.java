@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
@@ -18,6 +19,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -39,6 +41,9 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -46,7 +51,8 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>
  * Protection is by method and path. Every route not listed here is public, and on public routes the
  * {@code Authorization} header isn't even read, so a bad token never breaks them. Stateless: no HTTP session, no
- * cookies, no CSRF token.
+ * cookies, no CSRF token. Browsers on the origins in {@code app.cors.allowed-origins} may call the API; preflight
+ * requests are answered before any authorization check.
  */
 @Configuration(proxyBeanMethods = false)
 public class SecurityConfig {
@@ -75,6 +81,7 @@ public class SecurityConfig {
 	SecurityFilterChain securityFilterChain(HttpSecurity http, SessionJwtAuthenticationConverter converter,
 			ProblemDetailsSecurityHandler problemDetails) throws Exception {
 		return http
+				.cors(Customizer.withDefaults())
 				.csrf(AbstractHttpConfigurer::disable)
 				.formLogin(AbstractHttpConfigurer::disable)
 				.httpBasic(AbstractHttpConfigurer::disable)
@@ -112,6 +119,26 @@ public class SecurityConfig {
 			}
 			return delegate.resolve(request);
 		};
+	}
+
+	/**
+	 * Tokens travel in the {@code Authorization} header, not cookies, so credentials stay off. Exposes the response
+	 * headers a client needs: {@code ETag} for {@code If-Match}, {@code Location} after creating something, and
+	 * {@code Retry-After} on {@code 429}/{@code 503}.
+	 */
+	@Bean
+	CorsConfigurationSource corsConfigurationSource(CorsProperties properties) {
+		CorsConfiguration cors = new CorsConfiguration();
+		cors.setAllowedOrigins(properties.allowedOrigins());
+		cors.setAllowedMethods(List.of("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+		cors.setAllowedHeaders(List.of(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE, HttpHeaders.ACCEPT,
+				HttpHeaders.IF_MATCH, HttpHeaders.IF_NONE_MATCH));
+		cors.setExposedHeaders(List.of(HttpHeaders.ETAG, HttpHeaders.LOCATION, HttpHeaders.RETRY_AFTER));
+		cors.setAllowCredentials(false);
+		cors.setMaxAge(properties.maxAge());
+		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+		source.registerCorsConfiguration("/**", cors);
+		return source;
 	}
 
 	/** {@code ADMIN} can do everything {@code USER} can. */
