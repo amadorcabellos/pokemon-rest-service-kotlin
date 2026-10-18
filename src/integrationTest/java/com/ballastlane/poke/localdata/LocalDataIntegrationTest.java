@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.ballastlane.poke.domain.Role;
 import com.ballastlane.poke.domain.SyncRunStatus;
 import com.ballastlane.poke.domain.SyncTrigger;
 import com.ballastlane.poke.repository.LocalDataHeader;
@@ -27,8 +28,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.function.IntFunction;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
@@ -59,11 +62,20 @@ class LocalDataIntegrationTest extends AbstractApiIntegrationTest {
 	@Autowired
 	private PokemonTagRepository tagRepository;
 
+	/** Every request in this class is made by an administrator (ADMIN implies USER). */
+	private String adminToken;
+
+	@BeforeEach
+	void signIn() {
+		adminToken = bearerTokenFor("test-admin", Role.USER, Role.ADMIN);
+	}
+
 	@Test
 	void anUpdateShowsInTheDetailedViewEvenWhenItIsCached() throws Exception {
 		lookUp("pikachu");
 
-		mockMvc.perform(put("/api/v1/pokemon/pikachu").contentType(MediaType.APPLICATION_JSON).content(PIKACHU_DATA))
+		mockMvc.perform(put("/api/v1/pokemon/pikachu").contentType(MediaType.APPLICATION_JSON).content(PIKACHU_DATA)
+				.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk())
 				.andExpect(header().string("ETag", "\"1\""))
 				.andExpect(jsonPath("$.localizedNames[0].locale").value("es"))
@@ -74,7 +86,7 @@ class LocalDataIntegrationTest extends AbstractApiIntegrationTest {
 				.andExpect(jsonPath("$.modifiedAt").exists())
 				.andExpect(jsonPath("$.version").value(1));
 
-		mockMvc.perform(get("/api/v1/pokemon/PIKACHU"))
+		mockMvc.perform(get("/api/v1/pokemon/PIKACHU").header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk())
 				.andExpect(header().string("ETag", "\"1\""))
 				.andExpect(jsonPath("$.name").value("pikachu"))
@@ -94,10 +106,12 @@ class LocalDataIntegrationTest extends AbstractApiIntegrationTest {
 	@Test
 	void aPartialUpdateOnlyChangesWhatItSends() throws Exception {
 		lookUp("pikachu");
-		mockMvc.perform(put("/api/v1/pokemon/25").contentType(MediaType.APPLICATION_JSON).content(PIKACHU_DATA))
+		mockMvc.perform(put("/api/v1/pokemon/25").contentType(MediaType.APPLICATION_JSON).content(PIKACHU_DATA)
+				.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk());
 
-		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH).content("{ \"tags\": [ \"electric\" ] }"))
+		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH).content("{ \"tags\": [ \"electric\" ] }")
+				.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.tags.length()").value(1))
 				.andExpect(jsonPath("$.tags[0]").value("electric"))
@@ -106,7 +120,8 @@ class LocalDataIntegrationTest extends AbstractApiIntegrationTest {
 				.andExpect(jsonPath("$.version").value(2));
 
 		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH)
-						.content("{ \"tags\": null, \"geoMetadata\": null }"))
+						.content("{ \"tags\": null, \"geoMetadata\": null }")
+								.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.tags").isEmpty())
 				.andExpect(jsonPath("$.geoMetadata").isEmpty())
@@ -114,7 +129,8 @@ class LocalDataIntegrationTest extends AbstractApiIntegrationTest {
 				.andExpect(jsonPath("$.version").value(3));
 
 		// Sending the same data again changes nothing, so the version stays.
-		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH).content("{ \"tags\": [] }"))
+		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH).content("{ \"tags\": [] }")
+				.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk())
 				.andExpect(header().string("ETag", "\"3\""));
 	}
@@ -124,7 +140,8 @@ class LocalDataIntegrationTest extends AbstractApiIntegrationTest {
 		lookUp("pikachu");
 
 		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH).content("""
-						{ "geoMetadata": [ { "kind": "area", "value": "route 1" }, { "kind": "area", "value": "route 1" } ] }"""))
+						{ "geoMetadata": [ { "kind": "area", "value": "route 1" }, { "kind": "area", "value": "route 1" } ] }""")
+								.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.geoMetadata.length()").value(2));
 
@@ -135,24 +152,29 @@ class LocalDataIntegrationTest extends AbstractApiIntegrationTest {
 	@Test
 	void invalidRequestsChangeNothing() throws Exception {
 		lookUp("pikachu");
-		mockMvc.perform(put("/api/v1/pokemon/pikachu").contentType(MediaType.APPLICATION_JSON).content(PIKACHU_DATA))
+		mockMvc.perform(put("/api/v1/pokemon/pikachu").contentType(MediaType.APPLICATION_JSON).content(PIKACHU_DATA)
+				.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk());
 
 		mockMvc.perform(put("/api/v1/pokemon/pikachu").contentType(MediaType.APPLICATION_JSON)
-						.content("{ \"name\": \"raichu\", \"localizedNames\": [], \"geoMetadata\": [], \"tags\": [] }"))
+						.content("{ \"name\": \"raichu\", \"localizedNames\": [], \"geoMetadata\": [], \"tags\": [] }")
+								.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.errors[0].field").value("name"))
 				.andExpect(jsonPath("$.errors[0].message").value("is read only"));
 		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH)
-						.content("{ \"tags\": [ \"ok\", \"OK\" ], \"localizedNames\": [ { \"locale\": \"??\", \"name\": \"x\" } ] }"))
+						.content("{ \"tags\": [ \"ok\", \"OK\" ], \"localizedNames\": [ { \"locale\": \"??\", \"name\": \"x\" } ] }")
+								.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.errors.length()").value(2));
-		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH).content("{ \"tags\": [] } []"))
+		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH).content("{ \"tags\": [] } []")
+				.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isBadRequest());
-		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MediaType.TEXT_PLAIN).content("tags"))
+		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MediaType.TEXT_PLAIN).content("tags")
+				.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isUnsupportedMediaType());
 
-		mockMvc.perform(get("/api/v1/pokemon/pikachu"))
+		mockMvc.perform(get("/api/v1/pokemon/pikachu").header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(jsonPath("$.localData.tags.length()").value(2))
 				.andExpect(jsonPath("$.localData.localizedNames.length()").value(2))
 				.andExpect(jsonPath("$.localData.version").value(1));
@@ -160,26 +182,30 @@ class LocalDataIntegrationTest extends AbstractApiIntegrationTest {
 
 	@Test
 	void onlyPokemonStoredLocallyCanBeUpdated() throws Exception {
-		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH).content("{ \"tags\": [ \"x\" ] }"))
+		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH).content("{ \"tags\": [ \"x\" ] }")
+				.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.title").value("Pokemon not found"));
 		assertThat(pokeApi.countRequests("/api/v2/pokemon/pikachu")).isZero();
 
 		// Looking it up stores it, and from then on it can be updated.
 		lookUp("pikachu");
-		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH).content("{ \"tags\": [ \"x\" ] }"))
+		mockMvc.perform(patch("/api/v1/pokemon/pikachu").contentType(MERGE_PATCH).content("{ \"tags\": [ \"x\" ] }")
+				.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk());
 	}
 
 	@Test
 	void syncsKeepLocalDataAndItsVersion() throws Exception {
 		runFullSync();
-		mockMvc.perform(put("/api/v1/pokemon/bulbasaur").contentType(MediaType.APPLICATION_JSON).content(PIKACHU_DATA))
+		mockMvc.perform(put("/api/v1/pokemon/bulbasaur").contentType(MediaType.APPLICATION_JSON).content(PIKACHU_DATA)
+				.header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk());
 		LocalDataHeader before = repository.findLocalDataHeaderByPokeApiId(1).orElseThrow();
 
 		runFullSync();
-		mockMvc.perform(post("/api/v1/admin/sync/pokemon/1")).andExpect(status().isOk());
+		mockMvc.perform(post("/api/v1/admin/sync/pokemon/1")
+				.header(HttpHeaders.AUTHORIZATION, adminToken)).andExpect(status().isOk());
 
 		LocalDataHeader after = repository.findLocalDataHeaderByPokeApiId(1).orElseThrow();
 		assertThat(after).isEqualTo(before);
@@ -221,7 +247,8 @@ class LocalDataIntegrationTest extends AbstractApiIntegrationTest {
 	}
 
 	private void lookUp(String nameOrId) throws Exception {
-		mockMvc.perform(get("/api/v1/pokemon/{nameOrId}", nameOrId)).andExpect(status().isOk());
+		mockMvc.perform(get("/api/v1/pokemon/{nameOrId}", nameOrId)
+				.header(HttpHeaders.AUTHORIZATION, adminToken)).andExpect(status().isOk());
 	}
 
 	private void runFullSync() {
@@ -242,7 +269,8 @@ class LocalDataIntegrationTest extends AbstractApiIntegrationTest {
 				MockHttpServletRequestBuilder builder = request.apply(i);
 				Callable<Integer> call = () -> {
 					start.await();
-					return mockMvc.perform(builder).andReturn().getResponse().getStatus();
+					return mockMvc.perform(builder
+							.header(HttpHeaders.AUTHORIZATION, adminToken)).andReturn().getResponse().getStatus();
 				};
 				results.add(executor.submit(call));
 			}

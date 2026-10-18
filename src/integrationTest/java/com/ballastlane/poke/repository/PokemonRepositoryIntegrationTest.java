@@ -3,6 +3,8 @@ package com.ballastlane.poke.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.ballastlane.poke.domain.AppUser;
+import com.ballastlane.poke.domain.AuthSession;
 import com.ballastlane.poke.domain.GeoKind;
 import com.ballastlane.poke.domain.Pokemon;
 import com.ballastlane.poke.domain.PokemonAbility;
@@ -10,11 +12,14 @@ import com.ballastlane.poke.domain.PokemonGeoMetadata;
 import com.ballastlane.poke.domain.PokemonLocalizedName;
 import com.ballastlane.poke.domain.PokemonStat;
 import com.ballastlane.poke.domain.PokemonTag;
+import com.ballastlane.poke.domain.RefreshToken;
+import com.ballastlane.poke.domain.Role;
 import com.ballastlane.poke.domain.SyncRun;
 import com.ballastlane.poke.domain.SyncTrigger;
 import com.ballastlane.poke.support.ContainersConfiguration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,6 +50,15 @@ class PokemonRepositoryIntegrationTest {
 	private SyncRunRepository syncRunRepository;
 
 	@Autowired
+	private AppUserRepository userRepository;
+
+	@Autowired
+	private AuthSessionRepository sessionRepository;
+
+	@Autowired
+	private RefreshTokenRepository refreshTokenRepository;
+
+	@Autowired
 	private TestEntityManager entityManager;
 
 	@BeforeEach
@@ -52,6 +66,7 @@ class PokemonRepositoryIntegrationTest {
 		// API tests share this database and leave their rows behind; this transaction is rolled back afterwards.
 		repository.deleteAll();
 		repository.flush();
+		entityManager.getEntityManager().createNativeQuery("DELETE FROM app_user").executeUpdate();
 	}
 
 	@Test
@@ -130,6 +145,44 @@ class PokemonRepositoryIntegrationTest {
 		assertThatThrownBy(() -> geoMetadataRepository.saveAndFlush(
 				new PokemonGeoMetadata(pikachu, GeoKind.AREA, "route 1", "x".repeat(1001))))
 				.isInstanceOf(DataIntegrityViolationException.class);
+	}
+
+	@Test
+	void storesUsersWithTheirRolesSessionsAndRefreshTokens() {
+		Instant now = Instant.now();
+		AppUser ash = userRepository.saveAndFlush(new AppUser("ash", "hash", Set.of(Role.USER, Role.ADMIN)));
+		AuthSession session = sessionRepository.saveAndFlush(new AuthSession(ash, now, now.plusSeconds(3600)));
+		refreshTokenRepository.saveAndFlush(new RefreshToken("a".repeat(64), session, 0, now, now.plusSeconds(900)));
+		entityManager.clear();
+
+		assertThat(sessionRepository.findWithUserById(session.getId())).hasValueSatisfying(found -> {
+			assertThat(found.getUser().getUsername()).isEqualTo("ash");
+			assertThat(found.getUser().getRoles()).containsExactlyInAnyOrder(Role.USER, Role.ADMIN);
+		});
+		assertThat(refreshTokenRepository.findForUpdate("a".repeat(64)))
+				.hasValueSatisfying(token -> assertThat(token.getSession().getId()).isEqualTo(session.getId()));
+		assertThatThrownBy(() -> userRepository.saveAndFlush(new AppUser("ash", "other", Set.of(Role.USER))))
+				.isInstanceOf(DataIntegrityViolationException.class);
+	}
+
+	@Test
+	void storesUsernamesOnlyInLowercase() {
+		assertThatThrownBy(() -> userRepository.saveAndFlush(new AppUser("Misty", "hash", Set.of(Role.USER))))
+				.isInstanceOf(DataIntegrityViolationException.class);
+	}
+
+	@Test
+	void deletingAUserDeletesItsSessionsAndRefreshTokens() {
+		Instant now = Instant.now();
+		AppUser ash = userRepository.saveAndFlush(new AppUser("ash", "hash", Set.of(Role.USER)));
+		AuthSession session = sessionRepository.saveAndFlush(new AuthSession(ash, now, now.plusSeconds(3600)));
+		refreshTokenRepository.saveAndFlush(new RefreshToken("b".repeat(64), session, 0, now, now.plusSeconds(900)));
+
+		entityManager.getEntityManager().createNativeQuery("DELETE FROM app_user").executeUpdate();
+		entityManager.clear();
+
+		assertThat(sessionRepository.count()).isZero();
+		assertThat(refreshTokenRepository.count()).isZero();
 	}
 
 	@Test

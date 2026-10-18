@@ -19,6 +19,7 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Pattern;
 import org.springframework.http.HttpHeaders;
@@ -123,6 +124,11 @@ public class PokemonController {
 			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
 	@ApiResponse(responseCode = "415", description = "Body is not JSON",
 			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
+	@SecurityRequirement(name = OpenApiSecurity.BEARER)
+	@ApiResponse(responseCode = "401", description = "Missing, invalid or expired access token",
+			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
+	@ApiResponse(responseCode = "403", description = "Signed in without the USER role",
+			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
 	@PutMapping(path = "/{nameOrId}", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<LocalData> replaceLocalData(
 			@Parameter(description = "Pokemon name or PokeAPI id", example = "pikachu")
@@ -153,6 +159,11 @@ public class PokemonController {
 	@ApiResponse(responseCode = "413", description = "Request body too large",
 			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
 	@ApiResponse(responseCode = "415", description = "Body is not JSON",
+			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
+	@SecurityRequirement(name = OpenApiSecurity.BEARER)
+	@ApiResponse(responseCode = "401", description = "Missing, invalid or expired access token",
+			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
+	@ApiResponse(responseCode = "403", description = "Signed in without the USER role",
 			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
 	@PatchMapping(path = "/{nameOrId}", consumes = { MERGE_PATCH_JSON, MediaType.APPLICATION_JSON_VALUE })
 	public ResponseEntity<LocalData> patchLocalData(

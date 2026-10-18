@@ -1,14 +1,19 @@
 package com.ballastlane.poke.web;
 
+import com.ballastlane.poke.exception.InvalidCredentialsException;
 import com.ballastlane.poke.exception.InvalidIfMatchException;
 import com.ballastlane.poke.exception.InvalidLocalDataException;
 import com.ballastlane.poke.exception.InvalidPageRequestException;
+import com.ballastlane.poke.exception.InvalidRefreshTokenException;
+import com.ballastlane.poke.exception.InvalidRequestException;
 import com.ballastlane.poke.exception.LocalDataVersionMismatchException;
 import com.ballastlane.poke.exception.PokeApiException;
 import com.ballastlane.poke.exception.PokemonNotFoundException;
 import com.ballastlane.poke.exception.PokemonNotStoredLocallyException;
 import com.ballastlane.poke.exception.SyncAlreadyRunningException;
 import com.ballastlane.poke.exception.SyncRunNotFoundException;
+import com.ballastlane.poke.exception.TooManyLoginAttemptsException;
+import com.ballastlane.poke.exception.UsernameTakenException;
 import com.ballastlane.poke.localdata.FieldProblem;
 import com.ballastlane.poke.web.LocalDataRequestSizeFilter.RequestBodyTooLargeException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -19,6 +24,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -88,6 +94,39 @@ public class GlobalExceptionHandler {
 				"The request body is invalid; see 'errors' for each problem");
 		problem.setProperty("errors", ex.getProblems());
 		return problem;
+	}
+
+	@ExceptionHandler(InvalidRequestException.class)
+	ProblemDetail handleInvalidRequest(InvalidRequestException ex) {
+		ProblemDetail problem = problem(HttpStatus.BAD_REQUEST, "Invalid request",
+				"The request body is invalid; see 'errors' for each problem");
+		problem.setProperty("errors", ex.getProblems());
+		return problem;
+	}
+
+	@ExceptionHandler(UsernameTakenException.class)
+	ProblemDetail handleUsernameTaken(UsernameTakenException ex) {
+		return problem(HttpStatus.CONFLICT, "Username already taken", ex.getMessage());
+	}
+
+	@ExceptionHandler(InvalidCredentialsException.class)
+	ProblemDetail handleInvalidCredentials(InvalidCredentialsException ex) {
+		return problem(HttpStatus.UNAUTHORIZED, "Invalid username or password", ex.getMessage());
+	}
+
+	@ExceptionHandler(InvalidRefreshTokenException.class)
+	ProblemDetail handleInvalidRefreshToken(InvalidRefreshTokenException ex) {
+		return problem(HttpStatus.UNAUTHORIZED, "Invalid refresh token", ex.getMessage());
+	}
+
+	@ExceptionHandler(TooManyLoginAttemptsException.class)
+	ResponseEntity<ProblemDetail> handleTooManyLoginAttempts(TooManyLoginAttemptsException ex) {
+		long seconds = Math.max(1, (ex.getRetryAfter().toMillis() + 999) / 1000);
+		ProblemDetail problem = problem(HttpStatus.TOO_MANY_REQUESTS, "Too many sign-in attempts",
+				"%s (in %d seconds)".formatted(ex.getMessage(), seconds));
+		return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+				.header(HttpHeaders.RETRY_AFTER, Long.toString(seconds))
+				.body(problem);
 	}
 
 	@ExceptionHandler(InvalidIfMatchException.class)

@@ -44,7 +44,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(PokemonController.class)
-@Import(LocalDataRequestParser.class)
+@Import({ LocalDataRequestParser.class, WebSecurityTestConfiguration.class })
 class PokemonControllerTest {
 
 	private static final PokemonDetails PIKACHU = new PokemonDetails(25, "pikachu", "artwork.png",

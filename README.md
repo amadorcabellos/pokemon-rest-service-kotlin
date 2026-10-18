@@ -6,8 +6,10 @@ A Spring Boot REST API that serves Pokémon data from [PokeAPI](https://pokeapi.
 with each entry's sprite, category, mass and skills. Admin endpoints synchronize the PokeAPI catalogue into
 PostgreSQL, where it sits next to proprietary data (localized names, geographical metadata and tags) that
 a sync never overwrites. That proprietary data is shown in the detailed view and can be updated with `PUT` and
-`PATCH`, with strict validation and optimistic concurrency (`ETag` / `If-Match`). Calls to PokeAPI are protected by **Resilience4j** (retry,
-circuit breaker and rate limiter). The API is documented with **OpenAPI 3** and **Swagger UI**.
+`PATCH`, with strict validation and optimistic concurrency (`ETag` / `If-Match`). Users register and sign in
+through a small auth API; updates need a `USER` access token and synchronization an `ADMIN` one, while reading
+stays public. Calls to PokeAPI are protected by **Resilience4j** (retry, circuit breaker and rate limiter). The
+API is documented with **OpenAPI 3** and **Swagger UI**.
 
 Built with Java 21, Spring Boot 4.1 and Gradle 9.
 
@@ -37,6 +39,7 @@ Built with Java 21, Spring Boot 4.1 and Gradle 9.
 
 The API has two read paths, looking up a single Pokémon and browsing the catalogue, plus an admin path
 that [synchronizes PokeAPI into PostgreSQL](#data-synchronization) and [updates of local data](#local-data-updates).
+[Authentication](#authentication) decides who may call the routes that change data.
 
 ### Pokémon details lookup
 
@@ -199,12 +202,44 @@ PUT|PATCH /api/v1/pokemon/{nameOrId}   (If-Match optional)
   application's shared mapper stays lenient, which the PokeAPI client relies on, and every problem comes back
   as a field-level message.
 
+### Authentication
+
+```
+POST /auth/register ──► app_user (USER role, PBKDF2 password hash)
+POST /auth/login    ──► check password ──► auth_session (generation 0) ──► access token (JWT, 15 min)
+                                                                     └──► refresh token (random, 7 days, hash stored)
+PATCH /pokemon/x    ──► Authorization: Bearer <access token>
+   (protected)            │ signature + expiry (Nimbus, HS256)
+                          │ SessionJwtAuthenticationConverter: session active? token generation current?
+                          │   user still there? roles read from the database ──► 401 / 403 / allowed
+POST /auth/refresh  ──► refresh token used up ──► session generation + 1 (old access token retired) ──► new pair
+                        refresh token already used? ──► session ended (REUSE) ──► 401
+POST /auth/logout   ──► session ended (LOGOUT) ──► its access and refresh tokens stop working ──► 204
+```
+
+- **Protected by method and path.** Only six routes need a token, plus `GET /api/v1/auth/user`. Everything
+  else is public, and on public routes the `Authorization` header isn't even read, so a bad token never breaks
+  a public read. Refresh and sign-out are public: the refresh token in the body is their credential.
+- **Roles.** Registration gives `USER`, which may update local data. `ADMIN` implies `USER` and may also run
+  synchronizations. Only the [initial administrator](#initial-administrator) gets `ADMIN`.
+- **Short access tokens, real sign-out.** Access tokens last 15 minutes and refresh tokens 7 days, so a
+  client keeps getting new access tokens without signing in again, for up to 7 days between refreshes. Every protected request checks the token's
+  session in PostgreSQL (one indexed query), so signing out, refreshing, removing a role or deleting a user
+  takes effect on the next request, in every instance.
+- **Refresh rotation.** Each refresh token works once. A second use is treated as theft and ends the session.
+  A session can be refreshed for at most 30 days (`MAX_SESSION_LIFETIME`); after 7 days without a refresh
+  it's over and the user signs in again.
+- **Stateless HTTP.** No HTTP session, no cookies, no CSRF token: tokens travel in headers and bodies only.
+- **401 before anything else.** Spring Security runs before validation, the size filter and the services, so
+  an unauthenticated request never reaches them.
+
 ## Tech stack
 
 | Concern            | Choice                                                         |
 |--------------------|----------------------------------------------------------------|
 | Language / runtime | Java 21 (virtual threads enabled)                              |
 | Framework          | Spring Boot 4.1 (Web MVC, Data JPA, Data Redis, Cache, Validation, Actuator) |
+| Security           | Spring Security 7 with the OAuth2 resource server (bearer JWTs, Nimbus, HS256), PBKDF2 password hashing |
 | HTTP client        | Spring `RestClient`                                            |
 | Resilience         | Resilience4j 2.4 (`resilience4j-spring-boot4`): retry, circuit breaker, rate limiter |
 | API docs           | springdoc-openapi 3.1 (OpenAPI 3 + Swagger UI)                 |
@@ -226,6 +261,7 @@ PUT|PATCH /api/v1/pokemon/{nameOrId}   (If-Match optional)
     ├── main
     │   ├── java/com/ballastlane/poke
     │   │   ├── PokeRestServiceApplication.java
+    │   │   ├── auth/                # registration, sign-in, tokens, sessions, login limiter, initial admin
     │   │   ├── client/              # PokeApiClient + PokeAPI DTOs
     │   │   ├── config/              # RestClient, Redis cache, OpenAPI, @ConfigurationProperties
     │   │   ├── domain/              # JPA entities
@@ -246,6 +282,7 @@ PUT|PATCH /api/v1/pokemon/{nameOrId}   (If-Match optional)
         ├── java/com/ballastlane/poke
         │   ├── TestPokeRestServiceApplication.java   # run app with Testcontainers
         │   ├── support/             # shared containers + AbstractApiIntegrationTest base class
+        │   ├── auth/                # registration, sign-in, refresh, sign-out, expiry and lockout tests
         │   ├── catalog/             # catalogue browsing and caching tests
         │   ├── localdata/           # local data updates against PostgreSQL, Redis and syncs
         │   ├── repository/          # @DataJpaTest against real PostgreSQL
@@ -283,11 +320,15 @@ To stop the stack, run `docker compose down`. Add `-v` to also delete the Postgr
 
 ```bash
 docker compose up -d postgres redis
+JWT_SECRET=local-dev-only-jwt-secret-change-me-0123456789 \
+ADMIN_USERNAME=admin ADMIN_PASSWORD=local-admin-password \
 ./gradlew bootRun
 ```
 
 The defaults in `application.yml` point to `localhost:5432` (user, password and database are all `poke`)
-and `localhost:6379`, which match `compose.yaml`.
+and `localhost:6379`, which match `compose.yaml`. `JWT_SECRET` has no default: the app refuses to start without
+one. `compose.yaml` sets local development values for it and for the initial administrator (`admin` /
+`local-admin-password`); never reuse them anywhere shared.
 
 ### Option 3: Testcontainers dev mode (no compose needed)
 
@@ -297,19 +338,92 @@ and `localhost:6379`, which match `compose.yaml`.
 
 This starts `TestPokeRestServiceApplication`. It creates fresh PostgreSQL and Redis containers and wires
 them in automatically through `@ServiceConnection`. The data is discarded when the app stops. You can
-also run that class from your IDE.
+also run that class from your IDE. Its signing secret comes from `src/integrationTest/resources/application.properties`.
 
 ## API
 
-Base paths: `/api/v1/pokemon` (public) and `/api/v1/admin/sync` (admin)
+Base paths: `/api/v1/pokemon`, `/api/v1/admin/sync` and `/api/v1/auth`
 
-| Method and path                         | Purpose                                                  |
-|-----------------------------------------|----------------------------------------------------------|
-| `GET /api/v1/pokemon/{nameOrId}`        | [Detailed view](#get-pokémon-details-by-name-or-id), with `localData` and an `ETag` |
-| `PUT /api/v1/pokemon/{nameOrId}`        | [Replace the local data](#update-local-data) of a stored Pokémon |
-| `PATCH /api/v1/pokemon/{nameOrId}`      | [Partially update the local data](#update-local-data)   |
-| `GET /api/v1/pokemon?page&size`         | [Browse the catalogue](#browse-pokémon)                  |
-| `/api/v1/admin/sync/**`                 | [Synchronization](#admin-synchronization)               |
+| Method and path                               | Purpose                                                  | Access |
+|-----------------------------------------------|----------------------------------------------------------|--------|
+| `GET /api/v1/pokemon/{nameOrId}`              | [Detailed view](#get-pokémon-details-by-name-or-id), with `localData` and an `ETag` | public |
+| `GET /api/v1/pokemon?page&size`               | [Browse the catalogue](#browse-pokémon)                  | public |
+| `PUT /api/v1/pokemon/{nameOrId}`              | [Replace the local data](#update-local-data) of a stored Pokémon | `USER` |
+| `PATCH /api/v1/pokemon/{nameOrId}`            | [Partially update the local data](#update-local-data)   | `USER` |
+| `POST /api/v1/admin/sync/runs`                | [Start a full synchronization](#admin-synchronization)  | `ADMIN` |
+| `GET /api/v1/admin/sync/runs/latest`, `/runs/{runId}` | [Synchronization status](#admin-synchronization) | `ADMIN` |
+| `POST /api/v1/admin/sync/pokemon/{nameOrId}`  | [Synchronize one Pokémon](#admin-synchronization)       | `ADMIN` |
+| `POST /api/v1/auth/register`, `/login`, `/refresh`, `/logout` | [Auth](#auth-register-sign-in-refresh-sign-out) | public |
+| `GET /api/v1/auth/user`                       | [The signed-in user](#auth-register-sign-in-refresh-sign-out) | signed in |
+
+Protected routes answer `401` without a valid access token (with `WWW-Authenticate: Bearer`) and `403` without
+the role. `ADMIN` implies `USER`. Other methods on these paths still get `405`, with or without a token.
+
+### Auth: register, sign in, refresh, sign out
+
+```bash
+# Register (always gets the USER role)
+curl -i -X POST http://localhost:8080/api/v1/auth/register -H 'Content-Type: application/json' \
+  -d '{ "username": "ash", "password": "pikachu-i-choose-you" }'
+
+# Sign in: returns an access token and a refresh token
+curl -s -X POST http://localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{ "username": "ash", "password": "pikachu-i-choose-you" }'
+```
+
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+  "tokenType": "Bearer",
+  "expiresAt": "2026-10-18T10:15:00Z",
+  "refreshToken": "rmJr1dKMvFDbQ-8GNWsRWdlR0H4dJTutRHFwoGzbxHc",
+  "refreshExpiresAt": "2026-10-18T10:15:00Z"
+}
+```
+
+```bash
+# Call a protected route
+curl -X PATCH http://localhost:8080/api/v1/pokemon/pikachu -H "Authorization: Bearer $ACCESS" \
+  -H 'Content-Type: application/merge-patch+json' -d '{ "tags": [ "mascot" ] }'
+
+# Before the tokens expire: a new pair (no access token needed; the old pair stops working)
+curl -s -X POST http://localhost:8080/api/v1/auth/refresh -H 'Content-Type: application/json' \
+  -d "{ \"refreshToken\": \"$REFRESH\" }"
+
+# Sign out (no access token needed): ends this session only
+curl -i -X POST http://localhost:8080/api/v1/auth/logout -H 'Content-Type: application/json' \
+  -d "{ \"refreshToken\": \"$REFRESH\" }"
+
+# Who am I?
+curl http://localhost:8080/api/v1/auth/user -H "Authorization: Bearer $ACCESS"
+```
+
+| Rule | |
+|------|---|
+| Username | 3 to 50 characters: letters, digits, `.`, `_`, `-`. Stored in lowercase; unique ignoring case |
+| Password | 12 to 128 characters, any characters (spaces and Unicode too), not the username. Stored as a PBKDF2 hash |
+| Access token | Signed JWT, valid 15 minutes (`ACCESS_TOKEN_TTL`). Send as `Authorization: Bearer ...` |
+| Refresh token | Random, valid 7 days (`REFRESH_TOKEN_TTL`), works once. Only its SHA-256 hash is stored |
+| Session | One per sign-in; refreshed at most until 30 days after sign-in (`MAX_SESSION_LIFETIME`) |
+| Failed sign-ins | 5 within 15 minutes lock that username for 15 minutes (`429` + `Retry-After`), per instance |
+
+| Situation | Response |
+|-----------|----------|
+| Registered | `201` + `Location: /api/v1/auth/user`, the user without any password |
+| Invalid username or password on registration | `400` with every problem in `errors` |
+| Username taken | `409` |
+| Wrong username or wrong password | `401` "Invalid username or password" (the same for both) |
+| Too many failed sign-ins | `429` + `Retry-After` |
+| Unknown, expired, used or ended refresh token | `401` "Invalid refresh token"; a used one also ends its session |
+| Sign-out | Always `204` for a well-formed request, whether or not the token was valid; `400` without a token |
+| Protected route without a valid token | `401` + `WWW-Authenticate: Bearer` (`error="invalid_token"` if one was sent) |
+| Protected route without the role | `403` |
+
+#### Initial administrator
+
+`ADMIN` is never given through the API. At startup, if `ADMIN_USERNAME` and `ADMIN_PASSWORD` are both set and
+that user doesn't exist, it is created with `USER` and `ADMIN`. An existing user is never changed, and a
+password that breaks the policy stops the app from starting.
 
 ### Get Pokémon details by name or id
 
@@ -489,8 +603,8 @@ not the PokeAPI part of the view, so a sync never makes it out of date. Send it 
 nobody changed the data since you read it. `If-Match: *` matches any stored Pokémon, and weak tags (`W/"3"`)
 never match. Without `If-Match`, the last write wins. `If-None-Match` isn't supported on the detailed view.
 
-> These operations have no authentication yet, and they are on the public path. Protecting them later needs a
-> rule for the `PUT` and `PATCH` methods on `/api/v1/pokemon/**`.
+> Both operations need an access token of a user with the `USER` role (see [Auth](#auth-register-sign-in-refresh-sign-out)).
+> Without one they answer `401` before the body is even read.
 
 ### Browse Pokémon
 
@@ -560,8 +674,8 @@ none. Concurrent requests for the same uncached page or entry are de-duplicated 
 
 ### Admin: synchronization
 
-These endpoints sit under `/api/v1/admin/**`, so they can be protected separately. They have no
-authentication yet.
+These endpoints need an access token of a user with the `ADMIN` role, such as the
+[initial administrator](#initial-administrator): `401` without a valid token, `403` for a `USER`.
 
 | Method and path                               | Purpose                                         | Responses |
 |-----------------------------------------------|-------------------------------------------------|-----------|
@@ -651,6 +765,8 @@ Where the documentation comes from:
   `page`, `size` and `sort` as separate query parameters.
 - `springdoc.paths-to-match: /api/**` limits the document to business endpoints, so actuator endpoints
   are left out.
+- Protected operations carry the `bearerAuth` security scheme and document `401` and `403`. In Swagger UI,
+  sign in with `POST /api/v1/auth/login`, click **Authorize**, paste the `accessToken`, and try them.
 
 To export a static copy of the spec, for example for client generation, run
 `curl -s localhost:8080/v3/api-docs.yaml > openapi.yaml`.
@@ -746,6 +862,12 @@ variable.
 | `SYNC_SCHEDULE_ENABLED`       | `app.sync.schedule.enabled`       | `false` |
 | `SYNC_SCHEDULE_CRON`          | `app.sync.schedule.cron`          | `0 0 3 * * *` (Spring cron, daily at 03:00) |
 | `LOCAL_DATA_MAX_REQUEST_SIZE` | `app.local-data.max-request-size` | `64KB` (largest PUT/PATCH body; larger gets `413`) |
+| `JWT_SECRET`                  | `app.security.jwt-secret`         | **none**: required, at least 32 bytes; the app won't start without it |
+| `ACCESS_TOKEN_TTL`            | `app.security.access-token-ttl`   | `15m` |
+| `REFRESH_TOKEN_TTL`           | `app.security.refresh-token-ttl`  | `7d` |
+| `MAX_SESSION_LIFETIME`        | `app.security.max-session-lifetime` | `30d` (from sign-in, however often it is refreshed) |
+| `LOGIN_MAX_FAILURES` / `LOGIN_FAILURE_WINDOW` / `LOGIN_LOCKOUT` | `app.security.login-attempts.*` | `5` / `15m` / `15m` |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `app.security.initial-admin.*` | unset (no administrator is created) |
 
 You can also set `pokeapi.connect-timeout` (default `5s`) and `pokeapi.read-timeout` (default `10s`).
 For retry, circuit breaker and rate limiter settings, see [Resilience](#resilience). For Swagger UI and
@@ -781,6 +903,13 @@ Reports are written to `build/reports/tests/test/index.html` and
 | `IfMatchTest`          | Strong comparison, lists, `*`, weak tags never match, malformed headers |
 | `LocalDataServiceTest` | Sorted reads; only what changed is written (rename in place, delete then insert); a no-op keeps the version; a partial update only touches what it sends; repeated geo entries; a stale `If-Match` writes nothing; lookup by id or name; not stored locally gives `404` without a lock |
 | `LocalDataRequestSizeFilterTest` | A body without `Content-Length` fails once it goes over the limit; small bodies and other paths pass |
+| `PasswordPolicyTest`   | Username characters and length, normalization, password length in characters (Unicode, spaces), password equal to the username, every problem listed |
+| `LoginAttemptLimiterTest` | 5 failures lock a username until the lockout ends, the window slides, a success clears it, the number of tracked usernames is capped (with a movable clock) |
+| `TokenServiceTest`     | Default lifetimes (15 minutes access, 7 days refresh) and configured ones, JWT claims (user, session, generation, roles), never outliving the session, unique refresh tokens, only their hash stored, nothing printed |
+| `AuthServiceTest`      | Registration (normalized, hashed, `USER` only, duplicates and concurrent duplicates), sign-in (same error for unknown and wrong, limiter, session lifetime), refresh (rotation, next generation, reuse ends the session, expired/unknown/ended rejected, maximum lifetime), sign-out (ends the session, any token accepted, reuse) |
+| `InitialAdminCreatorTest` | Creates the configured administrator, leaves an existing user alone, does nothing unless configured, refuses a password that breaks the policy |
+| `AuthControllerTest`   | `@WebMvcTest` with the real security rules: `201` + `Location` (roles in the body ignored), `400` with `errors`, `409`, sign-in `200`/`401`/`429` + `Retry-After`, refresh and sign-out without an access token, `/user` with and without a token |
+| `SecurityRulesTest`    | Real signed tokens against the real filter chain: every protected route gives `401` + `WWW-Authenticate` without a token and with a garbage, wrongly signed or expired one, before validation or any service; `403` without the role; `ADMIN` implies `USER`; ended sessions, older generations, deleted users and roles removed in the database are rejected; two `Authorization` headers; public routes ignore bad tokens; `405` unchanged; no cookies |
 | `PokeApiClientTest`    | `RestClient` against `MockRestServiceServer`: deserialization (abilities, stats, artwork, species link), species and evolution chain parsing, catalogue listing, 404 → `PokemonNotFoundException`, 5xx → `PokeApiException` |
 | `PokemonMapperTest`    | DTO → entity (types, stats, abilities, species) and catalogue entry mapping, type and ability ordering, hectograms → kilograms, null-safety |
 | `PokemonTest`          | `copyUpstreamFrom` replaces upstream fields only and keeps identity and timestamps; tags are lowercased |
@@ -789,7 +918,7 @@ Reports are written to `build/reports/tests/test/index.html` and
 | `FullSyncRunnerTest`   | Walks every page and counts created/updated; records failures and carries on; pauses and retries when the circuit is open; fails after too many rejections or when the catalogue can't be read; never leaves a run `RUNNING` |
 | `ScheduledSyncTest`    | Disabled by default, starts a `SCHEDULED` run when enabled, skips when a run is already running |
 | `SyncRunRecoveryTest`  | Marks leftover `RUNNING` runs as interrupted on startup |
-| `SyncControllerTest`   | `@WebMvcTest` slice: `202` with `Location`, `409` with `runId`, run and latest run (`200`/`404`), single sync `200`/`400`/`404` |
+| `SyncControllerTest`   | `@WebMvcTest` slice (signed in as `ADMIN`): `202` with `Location`, `409` with `runId`, run and latest run (`200`/`404`), single sync `200`/`400`/`404` |
 
 ### Integration tests (Testcontainers)
 
@@ -803,8 +932,11 @@ Container setup lives in `src/integrationTest/java/.../support`:
 - `IntegrationTestConfiguration` combines the above and uses a `DynamicPropertyRegistrar` to point
   `pokeapi.base-url` at WireMock.
 - `AbstractApiIntegrationTest` is the base class for full-stack tests. It enables MockMvc and the
-  `integration` profile. Before each test it clears the database, all Redis caches, WireMock's request
-  journal and the circuit breaker.
+  `integration` profile. Before each test it clears the database (users included), all Redis caches,
+  WireMock's request journal, the circuit breaker and the failed sign-in limiter. `bearerTokenFor(username,
+  roles...)` gives a ready `Authorization` header for a new user, skipping the slow password hashing.
+- `src/integrationTest/resources/application.properties` holds a throwaway JWT secret (and
+  `src/test/resources/application.properties` one for the unit test slices).
 
 The containers are static, JVM-wide singletons, so they start **once per test run**. Every Spring test
 context reuses them, including contexts with different properties.
@@ -819,10 +951,12 @@ recorded calls.
 | `PokemonCatalogIntegrationTest`    | Browsing a 3-Pokémon WireMock catalogue: entries and metadata, partial last page, a repeated page served from Redis with no PokeAPI calls, entries reused across page sizes, a cached page served while the circuit is open, `503` for an uncached page while open, past-the-end, invalid paging |
 | `PokeApiResilienceIntegrationTest` | A 5xx is retried 3 times. A 404 is neither retried nor counted by the circuit breaker. Repeated failures open the circuit, and later calls get `503` without reaching PokeAPI (checked through `/actuator/circuitbreakers`). Cached data is still served while the circuit is open |
 | `PokeApiRateLimiterIntegrationTest`| Uses its own context with a quota of 6 calls that doesn't refresh, enough for two detail lookups (3 calls each). The next upstream call gets `429` and never reaches WireMock, while cached Pokémon are still served |
-| `OpenApiIntegrationTest`           | `/v3/api-docs` has the expected metadata, operations (including PUT and PATCH with their request schema, `If-Match` and 400/404/412/413/415), the `localData` schema and `ETag` header, documented error responses and paging parameters, and excludes actuator. Swagger UI is served |
-| `PokemonRepositoryIntegrationTest` | `@DataJpaTest` against real PostgreSQL with Flyway: queries, type, stat and ability ordering, unique constraints, rows written before V2 still load, proprietary data constraints (one name per locale, unique lowercase tags, repeated geo entries allowed, note length), only one `RUNNING` sync run, the local data version starts at 0 and saving the entity never writes it back |
-| `LocalDataIntegrationTest`         | PUT then GET shows the data while the PokeAPI part still comes from Redis; PATCH changes only what it sends, `null` clears, a no-op keeps the version; repeated geo entries; invalid requests change nothing; a Pokémon not stored locally gives `404` without calling PokeAPI, and can be updated after a lookup; full and single syncs keep the data and its version; two updates with the same `If-Match` give one `200` and one `412`; concurrent updates without `If-Match` alongside a sync all succeed |
-| `PokemonSyncIntegrationTest`       | A full sync of the 3-Pokémon WireMock catalogue stores every replicated field; a second run creates no duplicates; proprietary data survives full syncs, single syncs and lookups; a lookup-recorded row is completed, not duplicated; an upstream 404 gives `COMPLETED_WITH_ERRORS` with the failed name; a second start while running gives `409`; run status endpoints; single sync `200`/`404`/`400`. Runs are polled with Awaitility |
+| `OpenApiIntegrationTest`           | `/v3/api-docs` has the expected metadata, operations (including PUT and PATCH with their request schema, `If-Match` and 400/404/412/413/415), the `localData` schema and `ETag` header, the `bearerAuth` scheme on the protected operations with `401`/`403` (and not on public ones), the auth operations, documented error responses and paging parameters, and excludes actuator. Swagger UI is served |
+| `PokemonRepositoryIntegrationTest` | `@DataJpaTest` against real PostgreSQL with Flyway: queries, type, stat and ability ordering, unique constraints, rows written before V2 still load, proprietary data constraints (one name per locale, unique lowercase tags, repeated geo entries allowed, note length), only one `RUNNING` sync run, the local data version starts at 0 and saving the entity never writes it back, users with roles, sessions and refresh tokens (unique lowercase usernames, cascades from the user) |
+| `AuthIntegrationTest`              | Register, sign in, update local data, read `/user`, `403` on synchronization and `401` without a token; duplicates (and concurrent duplicates) give `409`; roles in the body are ignored; wrong username and wrong password give identical bodies; refresh retires the old pair and reuse ends the session; concurrent refreshes let one through; sign-out needs only the refresh token and ends only that session; repeated failures give `429`; deleted users and removed roles take effect at once; refresh tokens stored as hashes, passwords as PBKDF2, and no password or token in the logs |
+| `AuthLifecycleIntegrationTest`     | With a movable clock: the access token expires after 15 minutes but can still be refreshed days later, and the refresh token after 7 days; refreshing keeps a session alive until its 30-day maximum lifetime; a lockout ends after 15 minutes; the initial administrator can sign in and run a full synchronization, and isn't changed when it exists |
+| `LocalDataIntegrationTest`         | (Signed in as `ADMIN`.) PUT then GET shows the data while the PokeAPI part still comes from Redis; PATCH changes only what it sends, `null` clears, a no-op keeps the version; repeated geo entries; invalid requests change nothing; a Pokémon not stored locally gives `404` without calling PokeAPI, and can be updated after a lookup; full and single syncs keep the data and its version; two updates with the same `If-Match` give one `200` and one `412`; concurrent updates without `If-Match` alongside a sync all succeed |
+| `PokemonSyncIntegrationTest`       | (Signed in as `ADMIN`.) A full sync of the 3-Pokémon WireMock catalogue stores every replicated field; a second run creates no duplicates; proprietary data survives full syncs, single syncs and lookups; a lookup-recorded row is completed, not duplicated; an upstream 404 gives `COMPLETED_WITH_ERRORS` with the failed name; a second start while running gives `409`; run status endpoints; single sync `200`/`404`/`400`. Runs are polled with Awaitility |
 
 To add a PokeAPI stub, put a mapping in `wiremock/mappings/` and, if needed, a body file in
 `wiremock/__files/`. The catch-all `not-found.json` mapping has lower priority, so any path without its
@@ -848,6 +982,10 @@ schema but never changes it.
   for [local data updates](#local-data-updates), and limits `pokemon_geo_metadata.note` to 1,000 characters.
   The `Pokemon` entity maps the two columns read only, so only `PokemonRepository#bumpLocalDataVersion`
   changes them.
+- `V4__users_and_sessions.sql` adds `app_user` (lowercase unique usernames, password hashes), `app_user_role`,
+  `auth_session` (one per sign-in, with its token generation, maximum lifetime and how it ended) and
+  `auth_refresh_token` (SHA-256 hashes only; used tokens are kept to detect reuse). Sessions and tokens go
+  with their user (`ON DELETE CASCADE`). Nothing cleans up old sessions yet.
 
 The details lookup inserts a row the first time it sees a Pokémon, and skips it if one already exists, so it
 never overwrites anything. The detailed view (description, evolution) is only cached in Redis, never stored.
@@ -892,7 +1030,12 @@ starts.
   PokeAPI failures. Check `/actuator/circuitbreakers` and `/actuator/circuitbreakerevents`. It moves to
   half-open on its own after 30 s.
 - **Getting `429 Too Many Requests`.** The outgoing PokeAPI quota (`POKEAPI_RATE_LIMIT` per second) is used
-  up. Raise it carefully and keep PokeAPI's fair use policy in mind.
+  up. Raise it carefully and keep PokeAPI's fair use policy in mind. On `/api/v1/auth/login` it means too many
+  failed sign-ins for that username; wait for `Retry-After`.
+- **The app doesn't start: `app.security.jwt-secret`.** Set `JWT_SECRET` to at least 32 random bytes, for
+  example `openssl rand -base64 48`. Changing it signs everyone out.
+- **`401` on a route that used to work.** Updates and synchronization now need an access token, and access
+  tokens last 15 minutes: refresh (within 7 days of the last sign-in or refresh), or sign in again.
 
 ## Next steps
 
@@ -900,7 +1043,10 @@ This is a skeleton. Some natural extensions:
 
 - A fallback that serves stale data when PokeAPI is unavailable (for example, a longer-lived "stale" cache)
 - Retry-After headers on `429`/`503` responses, based on the rate limiter and circuit breaker state
-- Authentication for the `/api/v1/admin/**` endpoints and for `PUT`/`PATCH` on `/api/v1/pokemon/**`
+- "Sign out everywhere", a list of a user's sessions, and user management (roles, disabling) through the API
+- Cleaning up ended and expired sessions and refresh tokens (they are kept for now and grow with every
+  sign-in and refresh)
+- A failed sign-in limit shared between instances (for example in Redis)
 - Conditional reads (`If-None-Match` and `304`) on the detailed view
 - Distributed locking and recovery for full syncs across several application instances
 - CI pipeline (GitHub Actions) that runs `./gradlew build`
@@ -1027,6 +1173,41 @@ This feature used a spec-driven workflow with the project's `/spec` command
    - The DTOs are named `LocalData`, `LocalizedName`, `GeoEntry` and `LocalDataRequest` (documentation only).
    The result is [Update local data](#update-local-data) and the `localData` field of the detailed view,
    together with their unit and integration tests.
+
+**7. User Story 05: Authentication and protected routes (spec → plan → implementation)**
+
+1. **Spec.** Running the command below created the branch `claude/feature/api-user-auth-protected-routes`
+   and generated [`_specs/api-user-auth-protected-routes.md`](_specs/api-user-auth-protected-routes.md). Its
+   open questions were answered in the spec: two roles, open registration, usernames, the password policy, and
+   no session cleanup. Several points were added in conversation: refresh tokens and sign-out, both as public
+   routes that take the refresh token; 15-minute access tokens and 7-day refresh tokens, both
+   configurable; and
+   `/api/v1/auth/user` as the current-user route.
+
+   ```text
+   /spec Implement an auxiliary API for user registration, authentication, and the management of protected
+   versus public routes. The protected routes are: GET /api/v1/admin/sync/runs/{runId},
+   GET /api/v1/admin/sync/runs/latest, POST /api/v1/admin/sync/runs, POST /api/v1/admin/sync/pokemon/{nameOrId},
+   PATCH /api/v1/pokemon/{nameOrId}, PUT /api/v1/pokemon/{nameOrId}
+   ```
+
+2. **Plan.** An implementation plan was created from the spec and saved to
+   [`_plans/api-user-auth-protected-routes.md`](_plans/api-user-auth-protected-routes.md). It covers the
+   decisions, the data model, token and session design, the security filter chain, step-by-step tasks,
+   affected files and risks.
+
+3. **Implementation.** The plan was implemented with small deviations:
+   - Entities and repositories live in the existing `domain/` and `repository/` packages, as the rest of the
+     project does; `auth/` holds the services.
+   - Registration and sign-in input is checked by `PasswordPolicy` and reported through
+     `InvalidRequestException` (the `errors` list of US04) instead of Bean Validation.
+   - One `ProblemDetailsSecurityHandler` writes both `401` and `403`, with its own `WWW-Authenticate` header,
+     so the token library's error text (which can mention token details) never reaches a response.
+   - The tolerated clock skew is 30 seconds instead of the library default of 60, to suit 15-minute tokens.
+   - Refresh and sign-out accept tokens up to 4,096 characters, so an access token sent to sign-out by
+     mistake gets `204` like any other unknown token.
+   The result is the [Authentication](#authentication) feature and the
+   [auth API](#auth-register-sign-in-refresh-sign-out), together with their unit and integration tests.
 
 All generated code was reviewed. The full test suite (unit and Testcontainers integration tests)
 passes, and the app was smoke-tested against the real PokeAPI using Docker Compose.

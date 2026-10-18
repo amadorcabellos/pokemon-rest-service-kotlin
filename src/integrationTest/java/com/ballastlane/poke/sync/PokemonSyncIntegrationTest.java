@@ -15,6 +15,7 @@ import com.ballastlane.poke.domain.PokemonGeoMetadata;
 import com.ballastlane.poke.domain.PokemonLocalizedName;
 import com.ballastlane.poke.domain.PokemonStat;
 import com.ballastlane.poke.domain.PokemonTag;
+import com.ballastlane.poke.domain.Role;
 import com.ballastlane.poke.domain.SyncRunStatus;
 import com.ballastlane.poke.repository.PokemonGeoMetadataRepository;
 import com.ballastlane.poke.repository.PokemonLocalizedNameRepository;
@@ -24,8 +25,10 @@ import com.ballastlane.poke.web.dto.SyncRunReport;
 import com.jayway.jsonpath.JsonPath;
 import java.time.Duration;
 import java.time.Instant;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 
 /**
  * Full syncs walk the stubbed catalogue (bulbasaur, ivysaur, venusaur; two per page in this profile).
@@ -43,6 +46,14 @@ class PokemonSyncIntegrationTest extends AbstractApiIntegrationTest {
 
 	@Autowired
 	private PokemonTagRepository tagRepository;
+
+	/** Every request in this class is made by an administrator (ADMIN implies USER). */
+	private String adminToken;
+
+	@BeforeEach
+	void signIn() {
+		adminToken = bearerTokenFor("test-admin", Role.USER, Role.ADMIN);
+	}
 
 	@Test
 	void fullSyncStoresEveryCataloguePokemon() throws Exception {
@@ -88,8 +99,10 @@ class PokemonSyncIntegrationTest extends AbstractApiIntegrationTest {
 		tagRepository.save(new PokemonTag(bulbasaur, "Starter"));
 
 		runFullSync();
-		mockMvc.perform(post("/api/v1/admin/sync/pokemon/1")).andExpect(status().isOk());
-		mockMvc.perform(get("/api/v1/pokemon/1")).andExpect(status().isOk());
+		mockMvc.perform(post("/api/v1/admin/sync/pokemon/1")
+				.header(HttpHeaders.AUTHORIZATION, adminToken)).andExpect(status().isOk());
+		mockMvc.perform(get("/api/v1/pokemon/1")
+				.header(HttpHeaders.AUTHORIZATION, adminToken)).andExpect(status().isOk());
 
 		Pokemon refreshed = repository.findByPokeApiId(1).orElseThrow();
 		assertThat(refreshed.getId()).isEqualTo(bulbasaur.getId());
@@ -114,7 +127,8 @@ class PokemonSyncIntegrationTest extends AbstractApiIntegrationTest {
 
 	@Test
 	void fullSyncCompletesPokemonRecordedByALookup() throws Exception {
-		mockMvc.perform(get("/api/v1/pokemon/1")).andExpect(status().isOk());
+		mockMvc.perform(get("/api/v1/pokemon/1")
+				.header(HttpHeaders.AUTHORIZATION, adminToken)).andExpect(status().isOk());
 		Pokemon recorded = repository.findByPokeApiId(1).orElseThrow();
 		assertThat(recorded.getLastSyncedAt()).isNull();
 
@@ -184,11 +198,11 @@ class PokemonSyncIntegrationTest extends AbstractApiIntegrationTest {
 		try {
 			long runId = startFullSync();
 
-			mockMvc.perform(post("/api/v1/admin/sync/runs"))
+			mockMvc.perform(post("/api/v1/admin/sync/runs").header(HttpHeaders.AUTHORIZATION, adminToken))
 					.andExpect(status().isConflict())
 					.andExpect(jsonPath("$.title").value("Synchronization already running"))
 					.andExpect(jsonPath("$.runId").value(runId));
-			mockMvc.perform(get("/api/v1/admin/sync/runs/latest"))
+			mockMvc.perform(get("/api/v1/admin/sync/runs/latest").header(HttpHeaders.AUTHORIZATION, adminToken))
 					.andExpect(status().isOk())
 					.andExpect(jsonPath("$.id").value(runId))
 					.andExpect(jsonPath("$.status").value("RUNNING"));
@@ -202,27 +216,29 @@ class PokemonSyncIntegrationTest extends AbstractApiIntegrationTest {
 
 	@Test
 	void runStatusIsServedThroughTheApi() throws Exception {
-		mockMvc.perform(get("/api/v1/admin/sync/runs/latest")).andExpect(status().isNotFound());
+		mockMvc.perform(get("/api/v1/admin/sync/runs/latest")
+				.header(HttpHeaders.AUTHORIZATION, adminToken)).andExpect(status().isNotFound());
 
 		long runId = runFullSync().id();
 
-		mockMvc.perform(get("/api/v1/admin/sync/runs/{id}", runId))
+		mockMvc.perform(get("/api/v1/admin/sync/runs/{id}", runId).header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"))
 				.andExpect(jsonPath("$.trigger").value("API"))
 				.andExpect(jsonPath("$.created").value(3));
-		mockMvc.perform(get("/api/v1/admin/sync/runs/{id}", runId + 1000)).andExpect(status().isNotFound());
+		mockMvc.perform(get("/api/v1/admin/sync/runs/{id}", runId + 1000)
+				.header(HttpHeaders.AUTHORIZATION, adminToken)).andExpect(status().isNotFound());
 	}
 
 	@Test
 	void syncsOnePokemon() throws Exception {
-		mockMvc.perform(post("/api/v1/admin/sync/pokemon/PIKACHU"))
+		mockMvc.perform(post("/api/v1/admin/sync/pokemon/PIKACHU").header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.id").value(25))
 				.andExpect(jsonPath("$.name").value("pikachu"))
 				.andExpect(jsonPath("$.outcome").value("CREATED"))
 				.andExpect(jsonPath("$.lastSyncedAt").exists());
-		mockMvc.perform(post("/api/v1/admin/sync/pokemon/25"))
+		mockMvc.perform(post("/api/v1/admin/sync/pokemon/25").header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.outcome").value("UPDATED"));
 
@@ -234,10 +250,11 @@ class PokemonSyncIntegrationTest extends AbstractApiIntegrationTest {
 
 	@Test
 	void singleSyncRejectsUnknownAndInvalidPokemon() throws Exception {
-		mockMvc.perform(post("/api/v1/admin/sync/pokemon/missingno"))
+		mockMvc.perform(post("/api/v1/admin/sync/pokemon/missingno").header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.title").value("Pokemon not found"));
-		mockMvc.perform(post("/api/v1/admin/sync/pokemon/pika_chu!")).andExpect(status().isBadRequest());
+		mockMvc.perform(post("/api/v1/admin/sync/pokemon/pika_chu!")
+				.header(HttpHeaders.AUTHORIZATION, adminToken)).andExpect(status().isBadRequest());
 		assertThat(repository.count()).isZero();
 	}
 
@@ -246,7 +263,7 @@ class PokemonSyncIntegrationTest extends AbstractApiIntegrationTest {
 	}
 
 	private long startFullSync() throws Exception {
-		String body = mockMvc.perform(post("/api/v1/admin/sync/runs"))
+		String body = mockMvc.perform(post("/api/v1/admin/sync/runs").header(HttpHeaders.AUTHORIZATION, adminToken))
 				.andExpect(status().isAccepted())
 				.andExpect(header().exists("Location"))
 				.andExpect(jsonPath("$.status").value("RUNNING"))

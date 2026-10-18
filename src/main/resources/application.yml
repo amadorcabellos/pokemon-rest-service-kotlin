@@ -42,6 +42,19 @@ app:
       cron: ${SYNC_SCHEDULE_CRON:0 0 3 * * *}
   local-data:
     max-request-size: ${LOCAL_DATA_MAX_REQUEST_SIZE:64KB}
+  security:
+    # No default on purpose: the application refuses to start without a secret of at least 32 bytes.
+    jwt-secret: ${JWT_SECRET:}
+    access-token-ttl: ${ACCESS_TOKEN_TTL:15m}
+    refresh-token-ttl: ${REFRESH_TOKEN_TTL:7d}
+    max-session-lifetime: ${MAX_SESSION_LIFETIME:30d}
+    login-attempts:
+      max-failures: ${LOGIN_MAX_FAILURES:5}
+      window: ${LOGIN_FAILURE_WINDOW:15m}
+      lockout: ${LOGIN_LOCKOUT:15m}
+    initial-admin:
+      username: ${ADMIN_USERNAME:}
+      password: ${ADMIN_PASSWORD:}
 
 resilience4j:
   # Applied to PokeApiClient#fetchPokemon. Order: Retry -> CircuitBreaker -> RateLimiter -> HTTP call.

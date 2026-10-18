@@ -35,6 +35,10 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       POKEAPI_BASE_URL: https://pokeapi.co/api/v2
+      # Local development only. Use your own secret and administrator in any shared environment.
+      JWT_SECRET: local-dev-only-jwt-secret-change-me-0123456789
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: local-admin-password
     ports:
       - "8080:8080"
     depends_on:

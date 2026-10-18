@@ -36,11 +36,13 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(PokemonController.class)
-@Import({ LocalDataRequestParser.class, LocalDataConfig.class })
+@Import({ LocalDataRequestParser.class, LocalDataConfig.class, WebSecurityTestConfiguration.class })
+@WithMockUser(roles = "USER")
 class PokemonLocalDataControllerTest {
 
 	private static final MediaType MERGE_PATCH = MediaType.parseMediaType("application/merge-patch+json");
