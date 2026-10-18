@@ -75,7 +75,7 @@ species id/name (id via `PokeApiUrls.idFrom`). The lookup's `recordIfNew` in `Po
 working unchanged (insert-if-missing only, so it never overwrites anything) and now stores the richer row for
 free, since it's the same PokeAPI response. Its `last_synced_at` stays null.
 
-### Sync components (new package `com.ballastlane.poke.sync`)
+### Sync components (new package `com.ballastlane.pokemon.sync`)
 
 - **`PokemonSyncWriter`** (`@Transactional`, one transaction per Pokemon): `upsert(PokeApiPokemon)` finds by
   PokeAPI id; updates via `copyUpstreamFrom` + `markSynced` or inserts a new row; returns `CREATED` or
@@ -198,7 +198,7 @@ with OpenAPI annotations in the same style as `PokemonController`:
 
 ## Files
 
-| Action | File (under `src/main/java/com/ballastlane/poke/` unless noted) |
+| Action | File (under `src/main/java/com/ballastlane/pokemon/` unless noted) |
 |---|---|
 | Add | `src/main/resources/db/migration/V2__pokemon_sync.sql` |
 | Add | `domain/PokemonStat.java`, `domain/PokemonAbility.java`, `domain/PokemonLocalizedName.java`, `domain/PokemonGeoMetadata.java`, `domain/GeoKind.java`, `domain/PokemonTag.java`, `domain/SyncRun.java`, `domain/SyncRunFailure.java`, `domain/SyncRunStatus.java`, `domain/SyncTrigger.java` |

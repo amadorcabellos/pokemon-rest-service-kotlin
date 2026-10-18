@@ -70,7 +70,7 @@ mappings, a sync that read version 3 could save it back over a version 4 that an
 - `PokemonRepository` also gets a light query for the read side: `findIdAndLocalDataByPokeApiId`, a projection
   of id, version and modified time.
 
-### Request model and validation (new package `com.ballastlane.poke.localdata`)
+### Request model and validation (new package `com.ballastlane.pokemon.localdata`)
 
 - Request records in `web/dto`:
   - `LocalDataReplaceRequest(localizedNames, geoMetadata, tags)` for PUT
@@ -271,7 +271,7 @@ example request bodies.
 
 ## Files
 
-| Action | File (under `src/main/java/com/ballastlane/poke/` unless noted) |
+| Action | File (under `src/main/java/com/ballastlane/pokemon/` unless noted) |
 |---|---|
 | Add | `src/main/resources/db/migration/V3__pokemon_local_data.sql` |
 | Add | `localdata/LocalDataService.java`, `localdata/LocalDataValidator.java`, `localdata/LocalDataUpdate.java`, `localdata/LocalDataLimits.java`, `localdata/FieldProblem.java`, `localdata/IfMatch.java` |

@@ -94,5 +94,5 @@ tasks.withType(Test).configureEach {
 // `./gradlew bootTestRun` starts the app with throwaway PostgreSQL/Redis containers.
 tasks.named('bootTestRun') {
 	classpath = sourceSets.integrationTest.runtimeClasspath
-	mainClass = 'com.ballastlane.poke.TestPokeRestServiceApplication'
+	mainClass = 'com.ballastlane.pokemon.TestPokeRestServiceApplication'
 }

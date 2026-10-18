@@ -66,9 +66,9 @@ resilience4j:
         enable-exponential-backoff: true
         exponential-backoff-multiplier: 2
         retry-exceptions:
-          - com.ballastlane.poke.exception.PokeApiException
+          - com.ballastlane.pokemon.exception.PokeApiException
         ignore-exceptions:
-          - com.ballastlane.poke.exception.PokemonNotFoundException
+          - com.ballastlane.pokemon.exception.PokemonNotFoundException
   circuitbreaker:
     instances:
       pokeapi:
@@ -82,9 +82,9 @@ resilience4j:
         permitted-number-of-calls-in-half-open-state: 3
         automatic-transition-from-open-to-half-open-enabled: true
         record-exceptions:
-          - com.ballastlane.poke.exception.PokeApiException
+          - com.ballastlane.pokemon.exception.PokeApiException
         ignore-exceptions:
-          - com.ballastlane.poke.exception.PokemonNotFoundException
+          - com.ballastlane.pokemon.exception.PokemonNotFoundException
   ratelimiter:
     instances:
       pokeapi:

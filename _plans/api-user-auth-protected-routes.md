@@ -63,7 +63,7 @@ auth_refresh_token (token_hash CHAR(64) PK, session_id FK → auth_session ON DE
   for, so tokens from an older generation stop working at once.
 - No cleanup job, as decided. The tables grow with sign-ins, which the README points out.
 
-### Domain (new package `com.ballastlane.poke.auth`)
+### Domain (new package `com.ballastlane.pokemon.auth`)
 
 - Entities and repositories:
   - `AppUser`, with an eager `@ElementCollection Set<Role> roles`, and `Role` (`USER`, `ADMIN`).
@@ -315,7 +315,7 @@ stay public, as today.
 
 ## Files
 
-| Action | File (under `src/main/java/com/ballastlane/poke/` unless noted) |
+| Action | File (under `src/main/java/com/ballastlane/pokemon/` unless noted) |
 |---|---|
 | Add | `src/main/resources/db/migration/V4__users_and_sessions.sql` |
 | Add | `auth/AppUser.java`, `auth/Role.java`, `auth/AuthSession.java`, `auth/RefreshToken.java`, `auth/AppUserRepository.java`, `auth/AuthSessionRepository.java`, `auth/RefreshTokenRepository.java` |

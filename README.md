@@ -259,19 +259,22 @@ POST /auth/logout   ──► session ended (LOGOUT) ──► its access and re
 ├── Dockerfile                       # multi-stage, layered, non-root image
 └── src
     ├── main
-    │   ├── java/com/ballastlane/poke
+    │   ├── java/com/ballastlane/pokemon
     │   │   ├── PokeRestServiceApplication.java
-    │   │   ├── auth/                # registration, sign-in, tokens, sessions, login limiter, initial admin
+    │   │   ├── auth/                # registration, sign-in, tokens, sessions, login limiter, initial admin,
+    │   │   │                        # and the OpenAPI security scheme name
     │   │   ├── client/              # PokeApiClient + PokeAPI DTOs
     │   │   ├── config/              # RestClient, Redis cache, OpenAPI, @ConfigurationProperties
     │   │   ├── domain/              # JPA entities
     │   │   ├── exception/           # domain exceptions
+    │   │   ├── filter/              # servlet filters: request body size limit for local data updates
+    │   │   ├── handler/             # errors as Problem Details: GlobalExceptionHandler, security 401/403
     │   │   ├── localdata/           # local (proprietary) data updates: parser, If-Match, service
     │   │   ├── mapper/              # PokeAPI DTO ⇄ entity ⇄ response
     │   │   ├── repository/          # Spring Data JPA repositories
     │   │   ├── service/             # details + catalogue services and cached loaders
     │   │   ├── sync/                # PokeAPI → PostgreSQL synchronization (single and full runs)
-    │   │   └── web/                 # controllers (OpenAPI-annotated), DTOs, exception handler
+    │   │   └── web/                 # controllers (OpenAPI-annotated) and DTOs
     │   └── resources
     │       ├── application.yml
     │       └── db/migration/        # Flyway scripts
@@ -279,7 +282,7 @@ POST /auth/logout   ──► session ended (LOGOUT) ──► its access and re
     │   ├── java/...                 # Mockito / WebMvcTest / MockRestServiceServer
     │   └── resources/pokeapi/       # PokeAPI JSON fixtures
     └── integrationTest              # integration tests (Docker required)
-        ├── java/com/ballastlane/poke
+        ├── java/com/ballastlane/pokemon
         │   ├── TestPokeRestServiceApplication.java   # run app with Testcontainers
         │   ├── support/             # shared containers + AbstractApiIntegrationTest base class
         │   ├── auth/                # registration, sign-in, refresh, sign-out, expiry and lockout tests
