@@ -27,6 +27,8 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.dao.DataIntegrityViolationException;
 
 @DataJpaTest
@@ -67,6 +69,21 @@ class PokemonRepositoryIntegrationTest {
 		repository.deleteAll();
 		repository.flush();
 		entityManager.getEntityManager().createNativeQuery("DELETE FROM app_user").executeUpdate();
+	}
+
+	@Test
+	void findsPokeApiIdsByNameIgnoringCaseOrderedById() {
+		repository.saveAndFlush(new Pokemon(26, "raichu", 8, 300, 218, null, List.of()));
+		repository.saveAndFlush(new Pokemon(25, "pikachu", 4, 60, 112, null, List.of()));
+		repository.saveAndFlush(new Pokemon(1, "bulbasaur", 7, 69, 64, null, List.of()));
+		repository.saveAndFlush(new Pokemon(172, "pichu", 3, 20, 41, null, List.of()));
+
+		Page<Integer> firstPage = repository.findPokeApiIdsByNameLike("%CHU%", PageRequest.of(0, 2));
+		Page<Integer> secondPage = repository.findPokeApiIdsByNameLike("%CHU%", PageRequest.of(1, 2));
+
+		assertThat(firstPage.getContent()).containsExactly(25, 26);
+		assertThat(firstPage.getTotalElements()).isEqualTo(3);
+		assertThat(secondPage.getContent()).containsExactly(172);
 	}
 
 	@Test

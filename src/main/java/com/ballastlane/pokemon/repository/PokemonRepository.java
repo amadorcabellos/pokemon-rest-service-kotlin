@@ -3,6 +3,8 @@ package com.ballastlane.pokemon.repository;
 import com.ballastlane.pokemon.domain.Pokemon;
 import java.time.Instant;
 import java.util.Optional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -12,6 +14,14 @@ public interface PokemonRepository extends JpaRepository<Pokemon, Long> {
 	Optional<Pokemon> findByNameIgnoreCase(String name);
 
 	Optional<Pokemon> findByPokeApiId(Integer pokeApiId);
+
+	/**
+	 * PokeAPI ids of the stored pokemon whose name matches {@code pattern} case-insensitively, ordered by id.
+	 * {@code pattern} is an ILIKE pattern with {@code \} as the escape character.
+	 */
+	@Query(value = "SELECT poke_api_id FROM pokemon WHERE name ILIKE :pattern ORDER BY poke_api_id",
+			countQuery = "SELECT count(*) FROM pokemon WHERE name ILIKE :pattern", nativeQuery = true)
+	Page<Integer> findPokeApiIdsByNameLike(String pattern, Pageable pageable);
 
 	@Query("""
 			select new com.ballastlane.pokemon.repository.LocalDataHeader(p.id, p.localDataVersion, p.localDataModifiedAt)

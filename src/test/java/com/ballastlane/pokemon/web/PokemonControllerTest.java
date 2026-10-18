@@ -201,13 +201,32 @@ class PokemonControllerTest {
 				.andExpect(jsonPath("$.page").value(3));
 	}
 
+	@Test
+	void listPokemonFiltersByTrimmedName() throws Exception {
+		given(pokemonCatalogService.searchByName("Saur", 1, 10))
+				.willReturn(new PokemonSummaryPage(List.of(BULBASAUR), 1, 10, 11, 2));
+
+		mockMvc.perform(get("/api/v1/pokemon").param("page", "1").param("size", "10").param("name", "  Saur "))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.content[0].name").value("bulbasaur"))
+				.andExpect(jsonPath("$.totalElements").value(11));
+	}
+
+	@Test
+	void listPokemonIgnoresBlankName() throws Exception {
+		given(pokemonCatalogService.getPage(0, 20)).willReturn(new PokemonSummaryPage(List.of(), 0, 20, 1302, 66));
+
+		mockMvc.perform(get("/api/v1/pokemon").param("name", "  ")).andExpect(status().isOk());
+	}
+
 	@ParameterizedTest
 	@CsvSource(delimiter = '|', quoteCharacter = '"', value = {
 			"page=-1        | 'page' must be 0 or greater",
 			"size=0         | 'size' must be between 1 and 50",
 			"size=51        | 'size' must be between 1 and 50",
 			"size=abc       | 'size' must be a number",
-			"page=1.5       | 'page' must be a number" })
+			"page=1.5       | 'page' must be a number",
+			"name=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | 'name' must be at most 100 characters" })
 	void listPokemonRejectsInvalidPaging(String query, String detail) throws Exception {
 		mockMvc.perform(get("/api/v1/pokemon?" + query))
 				.andExpect(status().isBadRequest())

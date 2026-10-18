@@ -11,6 +11,7 @@ import com.ballastlane.pokemon.client.PokeApiClient;
 import com.ballastlane.pokemon.client.dto.PokeApiPokemonList;
 import com.ballastlane.pokemon.client.dto.PokeApiPokemonList.Entry;
 import com.ballastlane.pokemon.exception.PokeApiException;
+import com.ballastlane.pokemon.repository.PokemonRepository;
 import com.ballastlane.pokemon.web.dto.PokemonSummary;
 import com.ballastlane.pokemon.web.dto.PokemonSummaryPage;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -23,6 +24,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
 @ExtendWith(MockitoExtension.class)
 class PokemonCatalogServiceTest {
@@ -33,11 +36,15 @@ class PokemonCatalogServiceTest {
 	@Mock
 	private PokemonSummaryLoader summaryLoader;
 
+	@Mock
+	private PokemonRepository pokemonRepository;
+
 	private PokemonCatalogService service;
 
 	@BeforeEach
 	void setUp() {
-		service = new PokemonCatalogService(pokeApiClient, summaryLoader, Executors.newVirtualThreadPerTaskExecutor());
+		service = new PokemonCatalogService(pokeApiClient, summaryLoader, pokemonRepository,
+				Executors.newVirtualThreadPerTaskExecutor());
 	}
 
 	@Test
@@ -105,6 +112,32 @@ class PokemonCatalogServiceTest {
 				CallNotPermittedException.createCallNotPermittedException(CircuitBreaker.ofDefaults("pokeapi")));
 
 		assertThatThrownBy(() -> service.getPage(0, 1)).isInstanceOf(CallNotPermittedException.class);
+	}
+
+	@Test
+	void searchesStoredPokemonByNameAndLoadsTheirEntries() {
+		given(pokemonRepository.findPokeApiIdsByNameLike("%chu%", PageRequest.of(1, 2)))
+				.willReturn(new PageImpl<>(List.of(172), PageRequest.of(1, 2), 3));
+		given(summaryLoader.load(172)).willReturn(summary(172, "pichu"));
+
+		PokemonSummaryPage page = service.searchByName("chu", 1, 2);
+
+		assertThat(page.content()).extracting(PokemonSummary::name).containsExactly("pichu");
+		assertThat(page.page()).isEqualTo(1);
+		assertThat(page.totalElements()).isEqualTo(3);
+		assertThat(page.totalPages()).isEqualTo(2);
+		verify(pokeApiClient, never()).fetchPokemonPage(anyInt(), anyInt());
+	}
+
+	@Test
+	void escapesLikeWildcardsInSearchedName() {
+		given(pokemonRepository.findPokeApiIdsByNameLike("%a\\_b\\%c\\\\%", PageRequest.of(0, 20)))
+				.willReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+		PokemonSummaryPage page = service.searchByName("a_b%c\\", 0, 20);
+
+		assertThat(page.content()).isEmpty();
+		assertThat(page.totalElements()).isZero();
 	}
 
 	private static PokeApiPokemonList listing(int count, int... ids) {

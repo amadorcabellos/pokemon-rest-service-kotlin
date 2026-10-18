@@ -45,6 +45,8 @@ public class PokemonController {
 
 	private static final String PROBLEM_JSON = "application/problem+json";
 
+	private static final int MAX_NAME_FILTER_LENGTH = 100;
+
 	private static final String MERGE_PATCH_JSON = "application/merge-patch+json";
 
 	private static final String LOCAL_DATA_EXAMPLE = """
@@ -188,14 +190,16 @@ public class PokemonController {
 	}
 
 	/**
-	 * Pages through the full PokeAPI catalogue, ordered by PokeAPI id.
+	 * Pages through the full PokeAPI catalogue, ordered by PokeAPI id, optionally filtered by name.
 	 */
 	@Operation(summary = "Browse pokemon",
 			description = "Pages through the full PokeAPI catalogue ordered by id. Each entry has the sprite, "
 					+ "category (types), mass in kilograms and skills (abilities). Pages and entries are cached "
-					+ "in Redis.")
+					+ "in Redis. With 'name', only pokemon whose name contains it (case-insensitive) are "
+					+ "returned; the search runs against the pokemon stored in PostgreSQL, so it only finds "
+					+ "pokemon already synchronized or looked up.")
 	@ApiResponse(responseCode = "200", description = "Page of pokemon (empty past the end of the catalogue)")
-	@ApiResponse(responseCode = "400", description = "Invalid page or size",
+	@ApiResponse(responseCode = "400", description = "Invalid page, size or name",
 			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
 	@ApiResponse(responseCode = "429", description = "Outgoing PokeAPI rate limit exhausted",
 			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
@@ -208,7 +212,9 @@ public class PokemonController {
 			@Parameter(description = "Zero-based page number", example = "0")
 			@RequestParam(required = false) Integer page,
 			@Parameter(description = "Page size (default 20, maximum 50 unless configured otherwise)", example = "20")
-			@RequestParam(required = false) Integer size) {
+			@RequestParam(required = false) Integer size,
+			@Parameter(description = "Case-insensitive part of the name to filter by", example = "chu")
+			@RequestParam(required = false) String name) {
 		int pageNumber = page != null ? page : 0;
 		int pageSize = size != null ? size : catalogProperties.defaultPageSize();
 		if (pageNumber < 0) {
@@ -217,6 +223,14 @@ public class PokemonController {
 		if (pageSize < 1 || pageSize > catalogProperties.maxPageSize()) {
 			throw new InvalidPageRequestException(
 					"'size' must be between 1 and %d".formatted(catalogProperties.maxPageSize()));
+		}
+		if (name != null && !name.isBlank()) {
+			String trimmed = name.strip();
+			if (trimmed.length() > MAX_NAME_FILTER_LENGTH) {
+				throw new InvalidPageRequestException(
+						"'name' must be at most %d characters".formatted(MAX_NAME_FILTER_LENGTH));
+			}
+			return pokemonCatalogService.searchByName(trimmed, pageNumber, pageSize);
 		}
 		return pokemonCatalogService.getPage(pageNumber, pageSize);
 	}
