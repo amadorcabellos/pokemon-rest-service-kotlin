@@ -1,17 +1,24 @@
 package com.ballastlane.poke.web;
 
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.ballastlane.poke.config.CatalogProperties;
 import com.ballastlane.poke.exception.PokeApiException;
 import com.ballastlane.poke.exception.PokemonNotFoundException;
+import com.ballastlane.poke.localdata.LocalDataRequestParser;
+import com.ballastlane.poke.localdata.LocalDataService;
 import com.ballastlane.poke.service.PokemonCatalogService;
 import com.ballastlane.poke.service.PokemonDetailsService;
 import com.ballastlane.poke.web.dto.EvolutionStage;
+import com.ballastlane.poke.web.dto.GeoEntry;
+import com.ballastlane.poke.web.dto.LocalData;
+import com.ballastlane.poke.web.dto.LocalizedName;
 import com.ballastlane.poke.web.dto.PokemonDetails;
 import com.ballastlane.poke.web.dto.Stat;
 import com.ballastlane.poke.web.dto.PokemonSummary;
@@ -22,7 +29,9 @@ import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.ratelimiter.RateLimiter;
 import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -30,10 +39,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(PokemonController.class)
+@Import(LocalDataRequestParser.class)
 class PokemonControllerTest {
 
 	private static final PokemonDetails PIKACHU = new PokemonDetails(25, "pikachu", "artwork.png",
@@ -55,10 +66,18 @@ class PokemonControllerTest {
 	@MockitoBean
 	private PokemonCatalogService pokemonCatalogService;
 
+	@MockitoBean
+	private LocalDataService localDataService;
+
 	@TestConfiguration
 	@EnableConfigurationProperties(CatalogProperties.class)
 	static class CatalogPropertiesConfig {
 
+	}
+
+	@BeforeEach
+	void noLocalData() {
+		given(localDataService.read(anyInt())).willReturn(LocalData.EMPTY);
 	}
 
 	@Test
@@ -78,7 +97,29 @@ class PokemonControllerTest {
 				.andExpect(jsonPath("$.evolution.evolvesVia").doesNotExist())
 				.andExpect(jsonPath("$.evolution.evolvesTo[0].name").value("pikachu"))
 				.andExpect(jsonPath("$.evolution.evolvesTo[0].current").value(true))
-				.andExpect(jsonPath("$.evolution.evolvesTo[0].evolvesTo[0].evolvesVia").value("use thunder-stone"));
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].evolvesTo[0].evolvesVia").value("use thunder-stone"))
+				.andExpect(jsonPath("$.localData.tags").isEmpty())
+				.andExpect(jsonPath("$.localData.version").value(0))
+				.andExpect(header().string("ETag", "\"0\""));
+	}
+
+	@Test
+	void getPokemonAddsTheCurrentLocalData() throws Exception {
+		given(pokemonService.getPokemon("pikachu")).willReturn(PIKACHU);
+		given(localDataService.read(25)).willReturn(new LocalData(List.of(new LocalizedName("ja-JP", "ピカチュウ")),
+				List.of(new GeoEntry("region", "kanto", null)), List.of("mascot"),
+				Instant.parse("2026-10-18T10:00:00Z"), 3));
+
+		mockMvc.perform(get("/api/v1/pokemon/pikachu"))
+				.andExpect(status().isOk())
+				.andExpect(header().string("ETag", "\"3\""))
+				.andExpect(jsonPath("$.name").value("pikachu"))
+				.andExpect(jsonPath("$.localData.localizedNames[0].locale").value("ja-JP"))
+				.andExpect(jsonPath("$.localData.localizedNames[0].name").value("ピカチュウ"))
+				.andExpect(jsonPath("$.localData.geoMetadata[0].kind").value("region"))
+				.andExpect(jsonPath("$.localData.tags[0]").value("mascot"))
+				.andExpect(jsonPath("$.localData.modifiedAt").value("2026-10-18T10:00:00Z"))
+				.andExpect(jsonPath("$.localData.version").value(3));
 	}
 
 	@Test

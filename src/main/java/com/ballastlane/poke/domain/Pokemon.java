@@ -76,6 +76,17 @@ public class Pokemon {
 	@Column(name = "last_synced_at")
 	private Instant lastSyncedAt;
 
+	/*
+	 * Version of the proprietary data, written only by PokemonRepository#bumpLocalDataVersion. Read only here on
+	 * purpose: the sync saves whole Pokemon entities, and an updatable mapping would let it write a stale version
+	 * back over a newer one.
+	 */
+	@Column(name = "local_data_version", insertable = false, updatable = false)
+	private long localDataVersion;
+
+	@Column(name = "local_data_modified_at", insertable = false, updatable = false)
+	private Instant localDataModifiedAt;
+
 	@Column(name = "created_at", nullable = false, updatable = false)
 	private Instant createdAt;
 
@@ -195,6 +206,14 @@ public class Pokemon {
 
 	public Instant getLastSyncedAt() {
 		return lastSyncedAt;
+	}
+
+	public long getLocalDataVersion() {
+		return localDataVersion;
+	}
+
+	public Instant getLocalDataModifiedAt() {
+		return localDataModifiedAt;
 	}
 
 	public Instant getCreatedAt() {

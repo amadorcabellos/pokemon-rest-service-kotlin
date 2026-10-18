@@ -15,6 +15,7 @@ import com.ballastlane.poke.domain.SyncTrigger;
 import com.ballastlane.poke.support.ContainersConfiguration;
 import java.time.Instant;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -45,6 +46,13 @@ class PokemonRepositoryIntegrationTest {
 
 	@Autowired
 	private TestEntityManager entityManager;
+
+	@BeforeEach
+	void startEmpty() {
+		// API tests share this database and leave their rows behind; this transaction is rolled back afterwards.
+		repository.deleteAll();
+		repository.flush();
+	}
 
 	@Test
 	void rowsWrittenBeforeTheSyncMigrationStillLoad() {
@@ -87,6 +95,40 @@ class PokemonRepositoryIntegrationTest {
 		assertThat(tagRepository.findByPokemonId(pikachu.getId())).extracting(PokemonTag::getTag)
 				.containsExactly("mascot");
 		assertThatThrownBy(() -> tagRepository.saveAndFlush(new PokemonTag(pikachu, "MASCOT")))
+				.isInstanceOf(DataIntegrityViolationException.class);
+	}
+
+	@Test
+	void localDataVersionStartsAtZeroAndOnlyChangesThroughItsOwnUpdate() {
+		Pokemon pikachu = repository.saveAndFlush(new Pokemon(25, "pikachu", 4, 60, 112, null, List.of()));
+		assertThat(repository.findLocalDataHeaderByPokeApiId(25)).hasValueSatisfying(header -> {
+			assertThat(header.version()).isZero();
+			assertThat(header.modifiedAt()).isNull();
+		});
+
+		Instant modifiedAt = Instant.parse("2026-10-18T10:00:00Z");
+		repository.bumpLocalDataVersion(pikachu.getId(), modifiedAt);
+		// Saving the entity again (as the sync does) must not write the version back.
+		pikachu.markSynced(Instant.now());
+		repository.saveAndFlush(pikachu);
+		entityManager.clear();
+
+		assertThat(repository.findLocalDataHeaderByName("PIKACHU")).hasValueSatisfying(header -> {
+			assertThat(header.version()).isEqualTo(1);
+			assertThat(header.modifiedAt()).isEqualTo(modifiedAt);
+		});
+		assertThat(repository.lockLocalDataVersion(pikachu.getId())).isEqualTo(1);
+	}
+
+	@Test
+	void allowsRepeatedGeoEntriesButNotOverlongNotes() {
+		Pokemon pikachu = repository.saveAndFlush(new Pokemon(25, "pikachu", 4, 60, 112, null, List.of()));
+		geoMetadataRepository.saveAndFlush(new PokemonGeoMetadata(pikachu, GeoKind.REGION, "kanto", null));
+		geoMetadataRepository.saveAndFlush(new PokemonGeoMetadata(pikachu, GeoKind.REGION, "kanto", null));
+
+		assertThat(geoMetadataRepository.findByPokemonId(pikachu.getId())).hasSize(2);
+		assertThatThrownBy(() -> geoMetadataRepository.saveAndFlush(
+				new PokemonGeoMetadata(pikachu, GeoKind.AREA, "route 1", "x".repeat(1001))))
 				.isInstanceOf(DataIntegrityViolationException.class);
 	}
 

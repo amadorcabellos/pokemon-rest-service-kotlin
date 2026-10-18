@@ -2,6 +2,7 @@ package com.ballastlane.poke.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -38,15 +39,23 @@ class PokemonApiIntegrationTest extends AbstractApiIntegrationTest {
 				.andExpect(jsonPath("$.evolution.evolvesTo[0].current").value(true))
 				.andExpect(jsonPath("$.evolution.evolvesTo[0].evolvesTo[0].name").value("raichu"))
 				.andExpect(jsonPath("$.evolution.evolvesTo[0].evolvesTo[0].evolvesVia").value("use thunder-stone"))
-				.andExpect(jsonPath("$.evolution.evolvesTo[0].evolvesTo[0].evolvesTo").isEmpty());
+				.andExpect(jsonPath("$.evolution.evolvesTo[0].evolvesTo[0].evolvesTo").isEmpty())
+				.andExpect(jsonPath("$.localData.localizedNames").isEmpty())
+				.andExpect(jsonPath("$.localData.geoMetadata").isEmpty())
+				.andExpect(jsonPath("$.localData.tags").isEmpty())
+				.andExpect(jsonPath("$.localData.modifiedAt").isEmpty())
+				.andExpect(jsonPath("$.localData.version").value(0))
+				.andExpect(header().string("ETag", "\"0\""));
 	}
 
 	@Test
 	void servesRepeatedLookupFromCache() throws Exception {
 		mockMvc.perform(get("/api/v1/pokemon/pikachu")).andExpect(status().isOk());
-		assertThat(pokemonDetailsCache().get("pikachu", PokemonDetails.class))
-				.extracting(PokemonDetails::name)
-				.isEqualTo("pikachu");
+		assertThat(pokemonDetailsCache().get("pikachu", PokemonDetails.class)).satisfies(cached -> {
+			assertThat(cached.name()).isEqualTo("pikachu");
+			// Local data is read fresh on every request, never cached.
+			assertThat(cached.localData()).isNull();
+		});
 
 		mockMvc.perform(get("/api/v1/pokemon/PIKACHU")).andExpect(status().isOk());
 

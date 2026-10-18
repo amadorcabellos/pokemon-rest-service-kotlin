@@ -5,7 +5,8 @@ A Spring Boot REST API that serves Pokémon data from [PokeAPI](https://pokeapi.
 (image, base stats, description and evolution chain), and browse the full PokeAPI catalogue page by page,
 with each entry's sprite, category, mass and skills. Admin endpoints synchronize the PokeAPI catalogue into
 PostgreSQL, where it sits next to proprietary data (localized names, geographical metadata and tags) that
-a sync never overwrites. Calls to PokeAPI are protected by **Resilience4j** (retry,
+a sync never overwrites. That proprietary data is shown in the detailed view and can be updated with `PUT` and
+`PATCH`, with strict validation and optimistic concurrency (`ETag` / `If-Match`). Calls to PokeAPI are protected by **Resilience4j** (retry,
 circuit breaker and rate limiter). The API is documented with **OpenAPI 3** and **Swagger UI**.
 
 Built with Java 21, Spring Boot 4.1 and Gradle 9.
@@ -35,7 +36,7 @@ Built with Java 21, Spring Boot 4.1 and Gradle 9.
 ## Architecture
 
 The API has two read paths, looking up a single Pokémon and browsing the catalogue, plus an admin path
-that [synchronizes PokeAPI into PostgreSQL](#data-synchronization).
+that [synchronizes PokeAPI into PostgreSQL](#data-synchronization) and [updates of local data](#local-data-updates).
 
 ### Pokémon details lookup
 
@@ -72,10 +73,13 @@ that [synchronizes PokeAPI into PostgreSQL](#data-synchronization).
    never stored in the shared chain.
 5. If any PokeAPI call fails, the whole request fails with the usual error (502, 503 or 429) and nothing is
    cached.
+6. The controller then adds `localData`, the Pokémon's [proprietary data](#local-data-updates), read from
+   PostgreSQL on every request. It is never cached, so an update shows straight away even when the rest of the
+   view comes from Redis. Its version is sent as the `ETag` header.
 
 An uncached lookup costs up to 3 PokeAPI calls. A cached one costs none, and is still served when PokeAPI is
-down, when the circuit breaker is open, or when the rate limit is used up. PostgreSQL is a record of looked-up
-Pokémon. It isn't used to answer requests, because it doesn't hold stats, descriptions or evolution data.
+down, when the circuit breaker is open, or when the rate limit is used up. Apart from `localData`, PostgreSQL
+isn't used to answer the lookup, because it doesn't hold descriptions or evolution data.
 
 ### Catalogue browsing
 
@@ -165,6 +169,36 @@ How a sync behaves:
   (`SYNC_SCHEDULE_ENABLED=false`), and is skipped while another sync is running. Nothing syncs on startup.
 - **Caches.** A sync only writes PostgreSQL. The public endpoints keep reading from PokeAPI and Redis.
 
+### Local data updates
+
+```
+PUT|PATCH /api/v1/pokemon/{nameOrId}   (If-Match optional)
+        │
+        ├─► LocalDataRequestSizeFilter    body over 64 KB → 413
+        ├─► LocalDataRequestParser        strict JSON, every invalid field listed → 400
+        ▼
+  LocalDataService.update  (one transaction, PostgreSQL only, PokeAPI is never called)
+        │  find the Pokémon locally by name or PokeAPI id                     → 404 if not stored
+        │  SELECT local_data_version ... FOR NO KEY UPDATE   (row lock: updates of one Pokémon run in turn)
+        │  If-Match given and not the current version                        → 412, nothing written
+        │  write only what changed: localized names by locale, tags by value, geo entries as a whole
+        │  something changed? UPDATE pokemon SET local_data_version + 1, local_data_modified_at
+        ▼
+  200 + ETag "<version>" + the updated localData
+```
+
+- **Version on the `pokemon` row.** `local_data_version` and `local_data_modified_at` (migration V3) version
+  the proprietary data. The `Pokemon` entity maps them **read only**: the sync saves whole `Pokemon` entities,
+  and an updatable mapping would let it write a stale version back over a newer one. Only
+  `PokemonRepository#bumpLocalDataVersion` writes them, so syncs and lookups never change the version.
+- **Concurrency.** The row lock serializes updates of the same Pokémon. A sync of that Pokémon waits for the
+  lock (milliseconds) and then runs; neither loses the other's writes. Without `If-Match` the last write wins.
+- **Idempotent.** An update that changes nothing keeps the version and the modified time.
+- **Strict parsing in one place.** The body is parsed by `LocalDataRequestParser` with its own Jackson mapper
+  (duplicate keys, trailing content and deep nesting rejected; no type coercion), not bound by Spring MVC. The
+  application's shared mapper stays lenient, which the PokeAPI client relies on, and every problem comes back
+  as a field-level message.
+
 ## Tech stack
 
 | Concern            | Choice                                                         |
@@ -196,6 +230,7 @@ How a sync behaves:
     │   │   ├── config/              # RestClient, Redis cache, OpenAPI, @ConfigurationProperties
     │   │   ├── domain/              # JPA entities
     │   │   ├── exception/           # domain exceptions
+    │   │   ├── localdata/           # local (proprietary) data updates: parser, If-Match, service
     │   │   ├── mapper/              # PokeAPI DTO ⇄ entity ⇄ response
     │   │   ├── repository/          # Spring Data JPA repositories
     │   │   ├── service/             # details + catalogue services and cached loaders
@@ -212,6 +247,7 @@ How a sync behaves:
         │   ├── TestPokeRestServiceApplication.java   # run app with Testcontainers
         │   ├── support/             # shared containers + AbstractApiIntegrationTest base class
         │   ├── catalog/             # catalogue browsing and caching tests
+        │   ├── localdata/           # local data updates against PostgreSQL, Redis and syncs
         │   ├── repository/          # @DataJpaTest against real PostgreSQL
         │   ├── resilience/          # retry, circuit breaker and rate limiter tests
         │   ├── sync/                # full and single synchronization tests
@@ -267,6 +303,14 @@ also run that class from your IDE.
 
 Base paths: `/api/v1/pokemon` (public) and `/api/v1/admin/sync` (admin)
 
+| Method and path                         | Purpose                                                  |
+|-----------------------------------------|----------------------------------------------------------|
+| `GET /api/v1/pokemon/{nameOrId}`        | [Detailed view](#get-pokémon-details-by-name-or-id), with `localData` and an `ETag` |
+| `PUT /api/v1/pokemon/{nameOrId}`        | [Replace the local data](#update-local-data) of a stored Pokémon |
+| `PATCH /api/v1/pokemon/{nameOrId}`      | [Partially update the local data](#update-local-data)   |
+| `GET /api/v1/pokemon?page&size`         | [Browse the catalogue](#browse-pokémon)                  |
+| `/api/v1/admin/sync/**`                 | [Synchronization](#admin-synchronization)               |
+
 ### Get Pokémon details by name or id
 
 ```http
@@ -304,9 +348,18 @@ curl -s http://localhost:8080/api/v1/pokemon/pikachu
         ]
       }
     ]
+  },
+  "localData": {
+    "localizedNames": [ { "locale": "ja-JP", "name": "ピカチュウ" } ],
+    "geoMetadata": [ { "kind": "region", "value": "kanto", "note": "Common in Viridian Forest" } ],
+    "tags": [ "mascot" ],
+    "modifiedAt": "2026-10-18T10:00:00Z",
+    "version": 3
   }
 }
 ```
+
+The response also has an `ETag: "3"` header: the version of `localData`.
 
 | Field         | Meaning                                                                                       |
 |---------------|-----------------------------------------------------------------------------------------------|
@@ -317,6 +370,7 @@ curl -s http://localhost:8080/api/v1/pokemon/pikachu
 | `evolution`   | The whole evolution chain as a tree, starting at the base form. Branches (for example Eevee) are listed in PokeAPI order. |
 | `evolvesVia`  | How a stage evolves from its parent: `level 16`, `use thunder-stone`, `trade holding metal-coat`, `friendship (day)`, and so on. Rarer triggers show the trigger name. Conditions that differ between games are joined with `or`. `null` for the base form. |
 | `current`     | `true` on the stage for the requested Pokémon's species.                                      |
+| `localData`   | Proprietary data owned by this service (see [Update local data](#update-local-data)), always current. Empty lists, `modifiedAt: null` and `version: 0` until it is first changed. |
 
 > **Breaking change:** this endpoint used to return `height`, `weight`, `baseExperience`, `spriteUrl` and
 > `types`. Those fields are no longer in the response. The basic data is still stored in PostgreSQL.
@@ -325,7 +379,7 @@ curl -s http://localhost:8080/api/v1/pokemon/pikachu
 
 | Cache             | Key                          | Content                                                  |
 |-------------------|------------------------------|----------------------------------------------------------|
-| `pokemon-details` | Trimmed, lowercased input    | The full detailed view                                   |
+| `pokemon-details` | Trimmed, lowercased input    | The detailed view without `localData`, which is read from PostgreSQL on every request |
 | `evolution-chain` | Evolution chain id           | The chain tree, without the `current` marker             |
 
 Both use the `POKEMON_CACHE_TTL` expiry (default 1 hour). Looking up `pikachu` and then `25` creates two
@@ -343,6 +397,100 @@ Not found:
   "instance": "/api/v1/pokemon/missingno"
 }
 ```
+
+### Update local data
+
+```http
+PUT   /api/v1/pokemon/{nameOrId}    Content-Type: application/json
+PATCH /api/v1/pokemon/{nameOrId}    Content-Type: application/merge-patch+json (or application/json)
+If-Match: "3"                       optional
+```
+
+Changes the proprietary data of a Pokémon **stored in the local database** (by a lookup or a sync). Only
+PostgreSQL is used: a Pokémon that isn't stored yet gets `404`, even if it exists in PokeAPI. Look it up or
+synchronize it first. Upstream (PokeAPI) fields can't be changed.
+
+- **PUT** replaces everything. All three fields are required; an empty list clears that kind of data.
+- **PATCH** follows JSON Merge Patch: a missing field is kept, `null` clears it, and a list replaces it.
+
+```bash
+curl -i -X PUT http://localhost:8080/api/v1/pokemon/pikachu \
+  -H 'Content-Type: application/json' -H 'If-Match: "0"' \
+  -d '{
+        "localizedNames": [ { "locale": "ja-jp", "name": "ピカチュウ" } ],
+        "geoMetadata": [ { "kind": "region", "value": "kanto", "note": "Common in Viridian Forest" } ],
+        "tags": [ "Mascot" ]
+      }'
+
+curl -X PATCH http://localhost:8080/api/v1/pokemon/25 \
+  -H 'Content-Type: application/merge-patch+json' -d '{ "tags": null }'
+```
+
+Both return `200` with the updated `localData` (as in the detailed view) and its new `ETag`:
+
+```json
+{
+  "localizedNames": [ { "locale": "ja-JP", "name": "ピカチュウ" } ],
+  "geoMetadata": [ { "kind": "region", "value": "kanto", "note": "Common in Viridian Forest" } ],
+  "tags": [ "mascot" ],
+  "modifiedAt": "2026-10-18T10:00:00Z",
+  "version": 1
+}
+```
+
+**Validation rules**
+
+| Field                        | Rules                                                                        |
+|------------------------------|------------------------------------------------------------------------------|
+| body                         | A JSON object. No duplicate keys, no trailing content, nesting depth up to 10, at most 64 KB (`LOCAL_DATA_MAX_REQUEST_SIZE`) |
+| other fields                 | Upstream fields (`name`, `stats`, `types`, ...) are "read only"; anything else is "not a known field" |
+| `localizedNames`             | At most 50, one per locale (ignoring case)                                   |
+| `localizedNames[].locale`    | A well-formed BCP 47 language tag, stored in canonical form (`ja-jp` → `ja-JP`) |
+| `localizedNames[].name`      | Not blank, up to 100 characters                                              |
+| `geoMetadata`                | At most 20. The same kind and value may appear more than once                |
+| `geoMetadata[].kind`         | `region`, `area` or `habitat` (any case)                                     |
+| `geoMetadata[].value`        | Not blank, up to 100 characters                                              |
+| `geoMetadata[].note`         | Optional, up to 1,000 characters; line breaks allowed                        |
+| `tags`                       | At most 30, unique after normalisation                                       |
+| `tags[]`                     | Up to 50 characters: letters, digits, `-` and `_`; stored in lowercase       |
+
+All text is trimmed, and control characters are rejected. A `400` lists every problem, never echoing the
+rejected values:
+
+```json
+{
+  "title": "Invalid request",
+  "status": 400,
+  "detail": "The request body is invalid; see 'errors' for each problem",
+  "errors": [
+    { "field": "name", "message": "is read only" },
+    { "field": "geoMetadata[0].kind", "message": "must be one of: region, area, habitat" },
+    { "field": "tags", "message": "has the tag 'mascot' more than once" }
+  ]
+}
+```
+
+**Responses**
+
+| Situation                                                   | HTTP status                  |
+|-------------------------------------------------------------|------------------------------|
+| Updated, or already as requested (version unchanged)        | `200 OK` + `ETag`            |
+| Invalid body or field, invalid `nameOrId`, malformed `If-Match` | `400 Bad Request` (with `errors`) |
+| Pokémon not stored locally                                  | `404 Not Found`              |
+| Other methods, such as `DELETE`                             | `405 Method Not Allowed` + `Allow` |
+| A change that conflicts with a database rule               | `409 Conflict`               |
+| `If-Match` doesn't match the current version                | `412 Precondition Failed` (with `currentVersion`) |
+| Body larger than 64 KB                                      | `413 Content Too Large`      |
+| Body that isn't JSON                                        | `415 Unsupported Media Type` |
+| Database unavailable                                        | `503 Service Unavailable`    |
+
+**Versions and `If-Match`.** The `ETag` of the detailed view and of every update versions `localData` only,
+not the PokeAPI part of the view, so a sync never makes it out of date. Send it as `If-Match` to make sure
+nobody changed the data since you read it. `If-Match: *` matches any stored Pokémon, and weak tags (`W/"3"`)
+never match. Without `If-Match`, the last write wins. `If-None-Match` isn't supported on the detailed view.
+
+> These operations have no authentication yet, and they are on the public path. Protecting them later needs a
+> rule for the `PUT` and `PATCH` methods on `/api/v1/pokemon/**`.
 
 ### Browse Pokémon
 
@@ -597,6 +745,7 @@ variable.
 | `SYNC_MAX_CONSECUTIVE_PAUSES` | `app.sync.max-consecutive-pauses` | `12` |
 | `SYNC_SCHEDULE_ENABLED`       | `app.sync.schedule.enabled`       | `false` |
 | `SYNC_SCHEDULE_CRON`          | `app.sync.schedule.cron`          | `0 0 3 * * *` (Spring cron, daily at 03:00) |
+| `LOCAL_DATA_MAX_REQUEST_SIZE` | `app.local-data.max-request-size` | `64KB` (largest PUT/PATCH body; larger gets `413`) |
 
 You can also set `pokeapi.connect-timeout` (default `5s`) and `pokeapi.read-timeout` (default `10s`).
 For retry, circuit breaker and rate limiter settings, see [Resilience](#resilience). For Swagger UI and
@@ -626,7 +775,12 @@ Reports are written to `build/reports/tests/test/index.html` and
 | `EvolutionChainLoaderTest`  | Fetches and maps a chain without a current stage, propagates client errors |
 | `PokemonCatalogServiceTest` | Page building from the catalogue listing, offset and metadata calculation, partial last page, past-the-end, offset overflow, whole page failing with the original exception |
 | `PokemonSummaryLoaderTest`  | Fetches by id, maps to a catalogue entry, propagates client errors |
-| `PokemonControllerTest`| `@WebMvcTest` slice with `@MockitoBean` services: details and page JSON shape, default and custom paging, 400 for invalid paging (parameterized), 400/404/429/502/503 mapping |
+| `PokemonControllerTest`| `@WebMvcTest` slice with `@MockitoBean` services: details and page JSON shape, `localData` and `ETag` on the detailed view, default and custom paging, 400 for invalid paging (parameterized), 400/404/429/502/503 mapping |
+| `PokemonLocalDataControllerTest` | `@WebMvcTest` slice for PUT and PATCH: `200` with `ETag`, merge-patch and plain JSON, `If-Match` passed on, every invalid field in `errors`, malformed and missing bodies, invalid path and `If-Match`, `404`, `412` with `currentVersion`, `415`, `405` with `Allow`, `413` |
+| `LocalDataRequestParserTest` | Normalisation (canonical locales, lowercase tags and kinds, blank notes), PUT needs every kind, PATCH keeps missing kinds and clears `null`, malformed bodies (empty, invalid, trailing content, not an object, duplicate keys, too deep), read-only and unknown fields, every rule with its field path, duplicates after normalisation, list sizes and types, repeated geo entries allowed |
+| `IfMatchTest`          | Strong comparison, lists, `*`, weak tags never match, malformed headers |
+| `LocalDataServiceTest` | Sorted reads; only what changed is written (rename in place, delete then insert); a no-op keeps the version; a partial update only touches what it sends; repeated geo entries; a stale `If-Match` writes nothing; lookup by id or name; not stored locally gives `404` without a lock |
+| `LocalDataRequestSizeFilterTest` | A body without `Content-Length` fails once it goes over the limit; small bodies and other paths pass |
 | `PokeApiClientTest`    | `RestClient` against `MockRestServiceServer`: deserialization (abilities, stats, artwork, species link), species and evolution chain parsing, catalogue listing, 404 → `PokemonNotFoundException`, 5xx → `PokeApiException` |
 | `PokemonMapperTest`    | DTO → entity (types, stats, abilities, species) and catalogue entry mapping, type and ability ordering, hectograms → kilograms, null-safety |
 | `PokemonTest`          | `copyUpstreamFrom` replaces upstream fields only and keeps identity and timestamps; tags are lowercased |
@@ -661,12 +815,13 @@ recorded calls.
 
 | Test                               | What it covers                                                     |
 |------------------------------------|--------------------------------------------------------------------|
-| `PokemonApiIntegrationTest`        | Details lookup: image, stats (total 320), cleaned description and evolution chain with the current stage; a repeat lookup makes no PokeAPI calls; Pichu and Pikachu share one chain request; an uncached view is refetched; one PostgreSQL row for `pikachu` and `25`; a cached view while the circuit is open; 404, 400, 502; a failing species call is retried and nothing is cached; actuator health |
+| `PokemonApiIntegrationTest`        | Details lookup: image, stats (total 320), cleaned description and evolution chain with the current stage, empty `localData` with `ETag: "0"`, and no `localData` in the cached value; a repeat lookup makes no PokeAPI calls; Pichu and Pikachu share one chain request; an uncached view is refetched; one PostgreSQL row for `pikachu` and `25`; a cached view while the circuit is open; 404, 400, 502; a failing species call is retried and nothing is cached; actuator health |
 | `PokemonCatalogIntegrationTest`    | Browsing a 3-Pokémon WireMock catalogue: entries and metadata, partial last page, a repeated page served from Redis with no PokeAPI calls, entries reused across page sizes, a cached page served while the circuit is open, `503` for an uncached page while open, past-the-end, invalid paging |
 | `PokeApiResilienceIntegrationTest` | A 5xx is retried 3 times. A 404 is neither retried nor counted by the circuit breaker. Repeated failures open the circuit, and later calls get `503` without reaching PokeAPI (checked through `/actuator/circuitbreakers`). Cached data is still served while the circuit is open |
 | `PokeApiRateLimiterIntegrationTest`| Uses its own context with a quota of 6 calls that doesn't refresh, enough for two detail lookups (3 calls each). The next upstream call gets `429` and never reaches WireMock, while cached Pokémon are still served |
-| `OpenApiIntegrationTest`           | `/v3/api-docs` has the expected metadata, operations, documented error responses and paging parameters, and excludes actuator. Swagger UI is served |
-| `PokemonRepositoryIntegrationTest` | `@DataJpaTest` against real PostgreSQL with Flyway: queries, type, stat and ability ordering, unique constraints, rows written before V2 still load, proprietary data constraints (one name per locale, unique lowercase tags), only one `RUNNING` sync run |
+| `OpenApiIntegrationTest`           | `/v3/api-docs` has the expected metadata, operations (including PUT and PATCH with their request schema, `If-Match` and 400/404/412/413/415), the `localData` schema and `ETag` header, documented error responses and paging parameters, and excludes actuator. Swagger UI is served |
+| `PokemonRepositoryIntegrationTest` | `@DataJpaTest` against real PostgreSQL with Flyway: queries, type, stat and ability ordering, unique constraints, rows written before V2 still load, proprietary data constraints (one name per locale, unique lowercase tags, repeated geo entries allowed, note length), only one `RUNNING` sync run, the local data version starts at 0 and saving the entity never writes it back |
+| `LocalDataIntegrationTest`         | PUT then GET shows the data while the PokeAPI part still comes from Redis; PATCH changes only what it sends, `null` clears, a no-op keeps the version; repeated geo entries; invalid requests change nothing; a Pokémon not stored locally gives `404` without calling PokeAPI, and can be updated after a lookup; full and single syncs keep the data and its version; two updates with the same `If-Match` give one `200` and one `412`; concurrent updates without `If-Match` alongside a sync all succeed |
 | `PokemonSyncIntegrationTest`       | A full sync of the 3-Pokémon WireMock catalogue stores every replicated field; a second run creates no duplicates; proprietary data survives full syncs, single syncs and lookups; a lookup-recorded row is completed, not duplicated; an upstream 404 gives `COMPLETED_WITH_ERRORS` with the failed name; a second start while running gives `409`; run status endpoints; single sync `200`/`404`/`400`. Runs are polled with Awaitility |
 
 To add a PokeAPI stub, put a mapping in `wiremock/mappings/` and, if needed, a body file in
@@ -689,6 +844,10 @@ schema but never changes it.
   `pokemon_stat` and `pokemon_ability` tables (upstream data). It also adds the proprietary
   `pokemon_localized_name`, `pokemon_geo_metadata` and `pokemon_tag` tables, and the `sync_run` and
   `sync_run_failure` tables. Rows from V1 stay valid, and the next sync fills in their new fields.
+- `V3__pokemon_local_data.sql` adds `local_data_version` (default 0) and `local_data_modified_at` to `pokemon`
+  for [local data updates](#local-data-updates), and limits `pokemon_geo_metadata.note` to 1,000 characters.
+  The `Pokemon` entity maps the two columns read only, so only `PokemonRepository#bumpLocalDataVersion`
+  changes them.
 
 The details lookup inserts a row the first time it sees a Pokémon, and skips it if one already exists, so it
 never overwrites anything. The detailed view (description, evolution) is only cached in Redis, never stored.
@@ -741,9 +900,8 @@ This is a skeleton. Some natural extensions:
 
 - A fallback that serves stale data when PokeAPI is unavailable (for example, a longer-lived "stale" cache)
 - Retry-After headers on `429`/`503` responses, based on the rate limiter and circuit breaker state
-- Endpoints to manage proprietary data (localized names, geographical metadata, tags), and returning it in
-  the public responses
-- Authentication for the `/api/v1/admin/**` endpoints
+- Authentication for the `/api/v1/admin/**` endpoints and for `PUT`/`PATCH` on `/api/v1/pokemon/**`
+- Conditional reads (`If-None-Match` and `304`) on the detailed view
 - Distributed locking and recovery for full syncs across several application instances
 - CI pipeline (GitHub Actions) that runs `./gradlew build`
 - Observability: Micrometer metrics, tracing, structured logging
@@ -838,6 +996,37 @@ This feature used a spec-driven workflow with the project's `/spec` command
      `SyncedPokemon`
    The result is the [Data synchronization](#data-synchronization) feature and its
    [admin endpoints](#admin-synchronization), together with their unit and integration tests.
+
+**6. User Story 04: Local data modification (spec → plan → implementation)**
+
+1. **Spec.** Running the command below created the branch `claude/feature/pokemon-local-update-01` and
+   generated [`_specs/pokemon-local-update.md`](_specs/pokemon-local-update.md). Its open questions were
+   answered in the spec: only proprietary data can be updated, with both PUT and PATCH on
+   `/api/v1/pokemon/{nameOrId}`, `null` clears, optional `If-Match`, any well-formed locale, and repeated geo
+   entries allowed. Two more points were decided in conversation: reads use only the existing
+   `GET /api/v1/pokemon/{nameOrId}` (no separate read endpoint), and the version is stored on the `pokemon`
+   table (no new table).
+
+   ```text
+   /spec User Story 04 Local Data Modification Enable update operations for any Pokemon currently stored
+   within the local database. Ensure robust validation: provide 404 responses for missing records, 400
+   status codes for malformed payloads, and incorporate further defensive logic as required.
+   ```
+
+2. **Plan.** An implementation plan was created from the spec and saved to
+   [`_plans/pokemon-local-update.md`](_plans/pokemon-local-update.md). It covers the version columns and why
+   they are read only for JPA, row locking, the diff-based update, the extended detailed view, validation and
+   error handling, step-by-step tasks, affected files and risks.
+
+3. **Implementation.** The plan was implemented with small deviations:
+   - The body is parsed and validated by `LocalDataRequestParser`, with its own strict Jackson mapper, instead
+     of a global Jackson customizer plus `@JsonAnySetter` and Bean Validation. The application's shared
+     mapper is unchanged, which removes the plan's main risk, and wrong JSON types are reported per field.
+   - A Pokémon that isn't stored locally raises its own `PokemonNotStoredLocallyException` (still `404`
+     "Pokemon not found"), so the detail can say how to fix it.
+   - The DTOs are named `LocalData`, `LocalizedName`, `GeoEntry` and `LocalDataRequest` (documentation only).
+   The result is [Update local data](#update-local-data) and the `localData` field of the detailed view,
+   together with their unit and integration tests.
 
 All generated code was reviewed. The full test suite (unit and Testcontainers integration tests)
 passes, and the app was smoke-tested against the real PokeAPI using Docker Compose.

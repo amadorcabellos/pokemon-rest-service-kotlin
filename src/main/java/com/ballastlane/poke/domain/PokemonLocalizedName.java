@@ -61,6 +61,10 @@ public class PokemonLocalizedName {
 		this.updatedAt = Instant.now();
 	}
 
+	public void rename(String name) {
+		this.name = name;
+	}
+
 	public Long getId() {
 		return id;
 	}

@@ -1,16 +1,32 @@
 package com.ballastlane.poke.web;
 
+import com.ballastlane.poke.exception.InvalidIfMatchException;
+import com.ballastlane.poke.exception.InvalidLocalDataException;
 import com.ballastlane.poke.exception.InvalidPageRequestException;
+import com.ballastlane.poke.exception.LocalDataVersionMismatchException;
 import com.ballastlane.poke.exception.PokeApiException;
 import com.ballastlane.poke.exception.PokemonNotFoundException;
+import com.ballastlane.poke.exception.PokemonNotStoredLocallyException;
 import com.ballastlane.poke.exception.SyncAlreadyRunningException;
 import com.ballastlane.poke.exception.SyncRunNotFoundException;
+import com.ballastlane.poke.localdata.FieldProblem;
+import com.ballastlane.poke.web.LocalDataRequestSizeFilter.RequestBodyTooLargeException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.ratelimiter.RequestNotPermitted;
+import java.util.List;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
@@ -55,7 +71,83 @@ public class GlobalExceptionHandler {
 				.map(error -> error.getDefaultMessage())
 				.findFirst()
 				.orElse("Invalid request");
-		return problem(HttpStatus.BAD_REQUEST, "Invalid request", detail);
+		List<FieldProblem> errors = ex.getParameterValidationResults().stream()
+				.flatMap(result -> result.getResolvableErrors().stream()
+						.map(error -> new FieldProblem(result.getMethodParameter().getParameterName(),
+								error.getDefaultMessage())))
+				.toList();
+		ProblemDetail problem = problem(HttpStatus.BAD_REQUEST, "Invalid request", detail);
+		problem.setProperty("errors", errors);
+		return problem;
+	}
+
+	@ExceptionHandler(InvalidLocalDataException.class)
+	ProblemDetail handleInvalidLocalData(InvalidLocalDataException ex) {
+		log.debug("Rejected local data update: {}", ex.getProblems());
+		ProblemDetail problem = problem(HttpStatus.BAD_REQUEST, "Invalid request",
+				"The request body is invalid; see 'errors' for each problem");
+		problem.setProperty("errors", ex.getProblems());
+		return problem;
+	}
+
+	@ExceptionHandler(InvalidIfMatchException.class)
+	ProblemDetail handleInvalidIfMatch(InvalidIfMatchException ex) {
+		return problem(HttpStatus.BAD_REQUEST, "Invalid request", ex.getMessage());
+	}
+
+	@ExceptionHandler(PokemonNotStoredLocallyException.class)
+	ProblemDetail handleNotStoredLocally(PokemonNotStoredLocallyException ex) {
+		return problem(HttpStatus.NOT_FOUND, "Pokemon not found", ex.getMessage());
+	}
+
+	@ExceptionHandler(LocalDataVersionMismatchException.class)
+	ProblemDetail handleVersionMismatch(LocalDataVersionMismatchException ex) {
+		ProblemDetail problem = problem(HttpStatus.PRECONDITION_FAILED, "Local data has changed", ex.getMessage());
+		problem.setProperty("currentVersion", ex.getCurrentVersion());
+		return problem;
+	}
+
+	@ExceptionHandler(HttpMessageNotReadableException.class)
+	ProblemDetail handleUnreadableBody(HttpMessageNotReadableException ex) {
+		if (ex.getCause() instanceof RequestBodyTooLargeException tooLarge) {
+			return problem(HttpStatus.CONTENT_TOO_LARGE, "Request body too large", tooLarge.getMessage());
+		}
+		// The converter's message can quote the input or name internal classes, so it is never passed on.
+		return problem(HttpStatus.BAD_REQUEST, "Malformed request body", "The request body could not be read");
+	}
+
+	@ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+	ProblemDetail handleUnsupportedMediaType(HttpMediaTypeNotSupportedException ex) {
+		return problem(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Unsupported media type",
+				"Supported content types: %s".formatted(ex.getSupportedMediaTypes()));
+	}
+
+	@ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+	ResponseEntity<ProblemDetail> handleMethodNotAllowed(HttpRequestMethodNotSupportedException ex) {
+		Set<HttpMethod> allowed = ex.getSupportedHttpMethods();
+		ProblemDetail problem = problem(HttpStatus.METHOD_NOT_ALLOWED, "Method not allowed",
+				"%s is not supported on this resource".formatted(ex.getMethod()));
+		return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+				.headers(headers -> {
+					if (allowed != null) {
+						headers.setAllow(allowed);
+					}
+				})
+				.body(problem);
+	}
+
+	@ExceptionHandler(DataIntegrityViolationException.class)
+	ProblemDetail handleIntegrityViolation(DataIntegrityViolationException ex) {
+		log.warn("Rejected a change that breaks a database rule: {}", ex.getMostSpecificCause().getMessage());
+		return problem(HttpStatus.CONFLICT, "Conflicting change",
+				"The change conflicts with the stored data; read it again and retry");
+	}
+
+	@ExceptionHandler({ CannotCreateTransactionException.class, DataAccessResourceFailureException.class })
+	ProblemDetail handleDatabaseUnavailable(Exception ex) {
+		log.error("Database unavailable", ex);
+		return problem(HttpStatus.SERVICE_UNAVAILABLE, "Service temporarily unavailable",
+				"The database is unavailable. Please retry later");
 	}
 
 	@ExceptionHandler(InvalidPageRequestException.class)

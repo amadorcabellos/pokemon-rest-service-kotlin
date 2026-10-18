@@ -40,6 +40,8 @@ app:
     schedule:
       enabled: ${SYNC_SCHEDULE_ENABLED:false}
       cron: ${SYNC_SCHEDULE_CRON:0 0 3 * * *}
+  local-data:
+    max-request-size: ${LOCAL_DATA_MAX_REQUEST_SIZE:64KB}
 
 resilience4j:
   # Applied to PokeApiClient#fetchPokemon. Order: Retry -> CircuitBreaker -> RateLimiter -> HTTP call.

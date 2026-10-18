@@ -43,6 +43,8 @@ class PokemonDetailsMapperTest {
 		assertThat(details.description()).isEqualTo("Pika pika.");
 		assertThat(details.evolution().current()).isFalse();
 		assertThat(details.evolution().evolvesTo().get(0).current()).isTrue();
+		// Local data is never part of the cached PokeAPI view.
+		assertThat(details.localData()).isNull();
 	}
 
 	@Test
