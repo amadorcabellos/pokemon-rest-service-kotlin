@@ -17,6 +17,7 @@ import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -124,7 +125,7 @@ class AuthLifecycleIntegrationTest extends AbstractApiIntegrationTest {
 	@Test
 	void theInitialAdministratorCanSynchronize() throws Exception {
 		// It was created at startup; the base class cleared users since, so run the startup step again.
-		initialAdminCreator.run(null);
+		initialAdminCreator.run(new DefaultApplicationArguments());
 		Tokens admin = auth.signIn("Professor-Oak", "admin-password-123");
 
 		String run = mockMvc.perform(post("/api/v1/admin/sync/runs").header(HttpHeaders.AUTHORIZATION,
@@ -136,7 +137,7 @@ class AuthLifecycleIntegrationTest extends AbstractApiIntegrationTest {
 				.until(() -> syncService.getRun(runId).status(), runStatus -> runStatus != SyncRunStatus.RUNNING);
 
 		// Running it again leaves the existing administrator alone.
-		initialAdminCreator.run(null);
+		initialAdminCreator.run(new DefaultApplicationArguments());
 		assertThat(userRepository.count()).isEqualTo(2);
 	}
 

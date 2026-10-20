@@ -150,7 +150,7 @@ class AuthControllerTest {
 
 	@Test
 	void showsTheSignedInUser() throws Exception {
-		given(authService.findUser(7L)).willReturn(Optional.of(new AppUser("ash", "hash", Set.of(Role.USER))));
+		given(authService.findUser(7L)).willReturn(new AppUser("ash", "hash", Set.of(Role.USER)));
 
 		mockMvc.perform(get("/api/v1/auth/user").with(jwt().jwt(token -> token.subject("7"))))
 				.andExpect(status().isOk())

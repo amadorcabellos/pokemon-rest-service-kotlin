@@ -15,6 +15,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.net.URI;
+import java.util.Optional;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -111,7 +112,7 @@ public class AuthController {
 			content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ProblemDetail.class)))
 	@GetMapping("/user")
 	public UserProfile currentUser(@AuthenticationPrincipal Jwt jwt) {
-		return authService.findUser(Long.parseLong(jwt.getSubject()))
+		return Optional.ofNullable(authService.findUser(Long.parseLong(jwt.getSubject())))
 				.map(UserProfile::from)
 				// Checked moments ago by the security filter; only a deletion in between gets here (401).
 				.orElseThrow(() -> new InvalidBearerTokenException("The access token is no longer valid"));
