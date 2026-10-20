@@ -7,7 +7,6 @@ package com.ballastlane.pokemon.web.dto
  * @property evolvesVia summary of the evolution condition (e.g. "level 16"); `null` for the base stage
  * @property current whether this is the species of the requested pokemon
  */
-@JvmRecord
 data class EvolutionStage(
     val id: Int,
     val name: String?,

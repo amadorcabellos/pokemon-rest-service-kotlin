@@ -7,14 +7,12 @@ import com.fasterxml.jackson.annotation.JsonProperty
 /**
  * Subset of the PokeAPI `/evolution-chain/{id}` payload that this service uses.
  */
-@JvmRecord
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class PokeApiEvolutionChain(val id: Int = 0, val chain: ChainLink? = null) {
 
     /**
      * One species in the chain, how it evolves from its parent, and what it evolves into.
      */
-    @JvmRecord
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ChainLink(
         val species: NamedResource? = null,
@@ -22,7 +20,6 @@ data class PokeApiEvolutionChain(val id: Int = 0, val chain: ChainLink? = null) 
         @JsonProperty("evolves_to") val evolvesTo: List<ChainLink>? = null,
     )
 
-    @JvmRecord
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class EvolutionDetail(
         val trigger: NamedResource? = null,

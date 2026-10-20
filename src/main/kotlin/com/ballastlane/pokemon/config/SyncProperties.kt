@@ -17,10 +17,9 @@ import org.springframework.validation.annotation.Validated
  * @property maxConsecutivePauses rejections in a row after which a full sync gives up (status `FAILED`)
  * @property schedule optional scheduled full sync
  */
-@JvmRecord
 @Validated
 @ConfigurationProperties(prefix = "app.sync")
-final data class SyncProperties(
+data class SyncProperties(
     @field:Min(1) @field:Max(100) val batchSize: Int = 50,
     val delayBetweenPokemon: Duration = Duration.ofMillis(100),
     val pauseWhenRejected: Duration = Duration.ofSeconds(5),
@@ -32,7 +31,6 @@ final data class SyncProperties(
      * @property enabled whether a full sync runs on the cron schedule (disabled by default)
      * @property cron Spring cron expression for the scheduled full sync
      */
-    @JvmRecord
     data class Schedule(
         val enabled: Boolean = false,
         @field:NotBlank val cron: String = "0 0 3 * * *",

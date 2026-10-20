@@ -7,5 +7,4 @@ package com.ballastlane.pokemon.localdata
  * whole
  * @property message what is wrong with it; never echoes the submitted value
  */
-@JvmRecord
 data class FieldProblem(val field: String, val message: String)

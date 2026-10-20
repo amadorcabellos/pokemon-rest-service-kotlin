@@ -6,7 +6,6 @@ import com.fasterxml.jackson.annotation.JsonProperty
 /**
  * Subset of the PokeAPI `/pokemon/{idOrName}` payload that this service uses.
  */
-@JvmRecord
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class PokeApiPokemon(
     val id: Int = 0,
@@ -21,30 +20,24 @@ data class PokeApiPokemon(
     val species: NamedResource? = null,
 ) {
 
-    @JvmRecord
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class Sprites(
         @JsonProperty("front_default") val frontDefault: String? = null,
         val other: OtherSprites? = null,
     )
 
-    @JvmRecord
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class OtherSprites(@JsonProperty("official-artwork") val officialArtwork: Artwork? = null)
 
-    @JvmRecord
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class Artwork(@JsonProperty("front_default") val frontDefault: String? = null)
 
-    @JvmRecord
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class StatSlot(@JsonProperty("base_stat") val baseStat: Int = 0, val stat: NamedResource? = null)
 
-    @JvmRecord
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class TypeSlot(val slot: Int = 0, val type: NamedResource? = null)
 
-    @JvmRecord
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class AbilitySlot(
         val slot: Int = 0,
@@ -52,7 +45,6 @@ data class PokeApiPokemon(
         val ability: NamedResource? = null,
     )
 
-    @JvmRecord
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class NamedResource(val name: String? = null, val url: String? = null)
 }

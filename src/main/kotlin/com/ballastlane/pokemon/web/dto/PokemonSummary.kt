@@ -5,7 +5,6 @@ import java.math.BigDecimal
 /**
  * Catalogue entry: the pokemon's sprite, category (types, in slot order), mass and skills (abilities).
  */
-@JvmRecord
 data class PokemonSummary(
     val id: Int,
     val name: String?,

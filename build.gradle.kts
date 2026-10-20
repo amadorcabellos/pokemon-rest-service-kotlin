@@ -41,7 +41,7 @@ repositories {
 // Integration tests live in src/integrationTest (Testcontainers, require Docker).
 testing {
 	suites {
-		val test by getting(JvmTestSuite::class) {
+		named<JvmTestSuite>("test") {
 			useJUnitJupiter()
 		}
 		register<JvmTestSuite>("integrationTest") {
@@ -52,7 +52,7 @@ testing {
 			targets {
 				all {
 					testTask.configure {
-						shouldRunAfter(test)
+						shouldRunAfter(tasks.named("test"))
 					}
 				}
 			}
@@ -60,11 +60,16 @@ testing {
 	}
 }
 
-val integrationTestImplementation by configurations.getting {
+configurations.named("integrationTestImplementation") {
 	extendsFrom(configurations.implementation.get(), configurations.testImplementation.get())
 }
-val integrationTestRuntimeOnly by configurations.getting {
+configurations.named("integrationTestRuntimeOnly") {
 	extendsFrom(configurations.runtimeOnly.get(), configurations.testRuntimeOnly.get())
+}
+
+// Tests mock with MockK; keeping Mockito off the classpath stops it being imported by accident.
+configurations.matching { it.name.startsWith("test") || it.name.startsWith("integrationTest") }.configureEach {
+	exclude(group = "org.mockito")
 }
 
 dependencies {
@@ -94,11 +99,11 @@ dependencies {
 	testImplementation("io.kotest:kotest-assertions-core:$kotestVersion")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
-	integrationTestImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
-	integrationTestImplementation("org.springframework.boot:spring-boot-starter-data-redis-test")
-	integrationTestImplementation("org.springframework.boot:spring-boot-testcontainers")
-	integrationTestImplementation("org.testcontainers:testcontainers-junit-jupiter")
-	integrationTestImplementation("org.testcontainers:testcontainers-postgresql")
+	"integrationTestImplementation"("org.springframework.boot:spring-boot-starter-data-jpa-test")
+	"integrationTestImplementation"("org.springframework.boot:spring-boot-starter-data-redis-test")
+	"integrationTestImplementation"("org.springframework.boot:spring-boot-testcontainers")
+	"integrationTestImplementation"("org.testcontainers:testcontainers-junit-jupiter")
+	"integrationTestImplementation"("org.testcontainers:testcontainers-postgresql")
 }
 
 tasks.named("check") {

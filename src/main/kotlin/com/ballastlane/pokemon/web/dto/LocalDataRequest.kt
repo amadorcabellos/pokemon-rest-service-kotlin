@@ -6,7 +6,6 @@ import io.swagger.v3.oas.annotations.media.Schema
  * Body of a local data update. Only used to document the API: the body is parsed and validated by
  * `LocalDataRequestParser`, so that every problem can be reported with its field.
  */
-@JvmRecord
 @Schema(
     description = "Proprietary data of a pokemon. PUT needs all three fields (an empty list clears that kind of " +
         "data). PATCH follows JSON Merge Patch: a missing field is kept, null clears it, a list replaces it.",

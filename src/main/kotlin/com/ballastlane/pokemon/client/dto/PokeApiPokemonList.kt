@@ -8,14 +8,12 @@ import com.fasterxml.jackson.annotation.Nulls
 /**
  * Subset of the PokeAPI `/pokemon?offset&limit` payload: the catalogue size and one page of entries.
  */
-@JvmRecord
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class PokeApiPokemonList(
     val count: Int = 0,
     @JsonSetter(nulls = Nulls.AS_EMPTY) val results: List<Entry> = emptyList(),
 ) {
 
-    @JvmRecord
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class Entry(val name: String, val url: String) {
 

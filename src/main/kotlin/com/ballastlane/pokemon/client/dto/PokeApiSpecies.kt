@@ -7,7 +7,6 @@ import com.fasterxml.jackson.annotation.JsonProperty
 /**
  * Subset of the PokeAPI `/pokemon-species/{id}` payload that this service uses.
  */
-@JvmRecord
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class PokeApiSpecies(
     val id: Int = 0,
@@ -16,7 +15,6 @@ data class PokeApiSpecies(
     @JsonProperty("evolution_chain") val evolutionChain: Resource? = null,
 ) {
 
-    @JvmRecord
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class FlavorText(
         @JsonProperty("flavor_text") val flavorText: String? = null,
@@ -24,7 +22,6 @@ data class PokeApiSpecies(
         val version: NamedResource? = null,
     )
 
-    @JvmRecord
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class Resource(val url: String? = null)
 }

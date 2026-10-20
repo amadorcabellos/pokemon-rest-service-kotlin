@@ -21,7 +21,6 @@ class IfMatch private constructor(private val any: Boolean, private val strongTa
         /**
          * @throws InvalidIfMatchException if the header is not valid
          */
-        @JvmStatic
         fun parse(header: String): IfMatch {
             if (header.isJavaBlank()) {
                 throw InvalidIfMatchException()
@@ -47,7 +46,6 @@ class IfMatch private constructor(private val any: Boolean, private val strongTa
         /**
          * The entity tag of a version of the proprietary data, as sent in the `ETag` header.
          */
-        @JvmStatic
         fun entityTag(version: Long): String = "\"$version\""
     }
 }

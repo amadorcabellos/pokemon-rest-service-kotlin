@@ -7,7 +7,6 @@ import java.time.Instant
 /**
  * A user as the API shows it: never with the password.
  */
-@JvmRecord
 data class UserProfile(
     val id: Long?,
     @Schema(example = "ash") val username: String,

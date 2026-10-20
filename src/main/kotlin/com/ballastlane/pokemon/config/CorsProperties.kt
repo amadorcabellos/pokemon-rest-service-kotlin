@@ -10,10 +10,9 @@ import org.springframework.validation.annotation.Validated
  * @property allowedOrigins exact origins (scheme, host and port, no trailing slash); empty disables CORS
  * @property maxAge how long a browser may cache a preflight response
  */
-@JvmRecord
 @Validated
 @ConfigurationProperties(prefix = "app.cors")
-final data class CorsProperties(
+data class CorsProperties(
     val allowedOrigins: List<String> = listOf("http://localhost:3000"),
     val maxAge: Duration = Duration.ofMinutes(30),
 )

@@ -8,7 +8,6 @@ import java.time.Instant
  * Tokens from sign-in and refresh. Send `accessToken` as `Authorization: Bearer ...`; keep `refreshToken` to get the
  * next pair before it expires.
  */
-@JvmRecord
 data class TokenResponse(
     val accessToken: String,
     @Schema(example = "Bearer") val tokenType: String,

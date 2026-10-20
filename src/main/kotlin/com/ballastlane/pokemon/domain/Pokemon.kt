@@ -23,7 +23,7 @@ import java.time.Instant
  */
 @Entity
 @Table(name = "pokemon")
-class Pokemon @JvmOverloads constructor(
+class Pokemon(
     pokeApiId: Int,
     name: String,
     height: Int?,

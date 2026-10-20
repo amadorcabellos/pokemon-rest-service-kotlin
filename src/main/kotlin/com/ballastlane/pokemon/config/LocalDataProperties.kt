@@ -9,7 +9,6 @@ import org.springframework.validation.annotation.Validated
  *
  * @property maxRequestSize largest accepted body of a PUT or PATCH on a pokemon; larger requests get 413
  */
-@JvmRecord
 @Validated
 @ConfigurationProperties(prefix = "app.local-data")
-final data class LocalDataProperties(val maxRequestSize: DataSize = DataSize.ofKilobytes(64))
+data class LocalDataProperties(val maxRequestSize: DataSize = DataSize.ofKilobytes(64))

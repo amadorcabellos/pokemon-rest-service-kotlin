@@ -9,7 +9,6 @@ import io.swagger.v3.oas.annotations.media.Schema
  * @property localData always read fresh from PostgreSQL; `null` in the cached value, which only holds the PokeAPI
  * part
  */
-@JvmRecord
 data class PokemonDetails(
     val id: Int,
     val name: String?,

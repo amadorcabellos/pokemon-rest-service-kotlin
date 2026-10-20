@@ -19,10 +19,9 @@ import org.springframework.validation.annotation.Validated
  * @property loginAttempts limit on failed sign-ins per username
  * @property initialAdmin administrator created at startup when both fields are set and the user doesn't exist
  */
-@JvmRecord
 @Validated
 @ConfigurationProperties(prefix = "app.security")
-final data class AuthProperties(
+data class AuthProperties(
     @field:NotBlank val jwtSecret: String = "",
     val accessTokenTtl: Duration = Duration.ofMinutes(15),
     val refreshTokenTtl: Duration = Duration.ofDays(7),
@@ -42,14 +41,12 @@ final data class AuthProperties(
      * @property window how far back failures are counted
      * @property lockout how long a locked username gets 429
      */
-    @JvmRecord
     data class LoginAttempts(
         @field:Min(1) val maxFailures: Int = 5,
         val window: Duration = Duration.ofMinutes(15),
         val lockout: Duration = Duration.ofMinutes(15),
     )
 
-    @JvmRecord
     data class InitialAdmin(val username: String? = null, val password: String? = null) {
 
         val isConfigured: Boolean

@@ -9,7 +9,6 @@ import java.time.Instant
  * @property modifiedAt when an update last changed it; `null` if it has never been changed
  * @property version increases with every update that changes something; also sent as the `ETag`
  */
-@JvmRecord
 data class LocalData(
     val localizedNames: List<LocalizedName>,
     val geoMetadata: List<GeoEntry>,
@@ -20,7 +19,6 @@ data class LocalData(
 
     companion object {
 
-        @JvmField
         val EMPTY = LocalData(listOf(), listOf(), listOf(), null, 0)
     }
 }

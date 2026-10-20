@@ -7,7 +7,6 @@ import java.time.Instant
 /**
  * Status and counts of a full synchronization run. `finishedAt` is null while the run is in progress.
  */
-@JvmRecord
 data class SyncRunReport(
     val id: Long?,
     val trigger: SyncTrigger,

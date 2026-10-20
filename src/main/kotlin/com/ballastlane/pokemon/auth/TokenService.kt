@@ -82,7 +82,6 @@ class TokenService(
         /**
          * SHA-256, hex encoded. A fast hash is enough: unlike a password, the token is 256 random bits.
          */
-        @JvmStatic
         fun hash(refreshToken: String): String =
             HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(refreshToken.toByteArray()))
     }

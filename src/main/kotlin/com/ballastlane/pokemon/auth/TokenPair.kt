@@ -5,7 +5,6 @@ import java.time.Instant
 /**
  * What sign-in and refresh return. The refresh token is only ever shown here; the database keeps its hash.
  */
-@JvmRecord
 data class TokenPair(
     val accessToken: String,
     val accessTokenExpiresAt: Instant,

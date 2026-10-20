@@ -9,5 +9,4 @@ import java.time.Instant
  * @property version version of its proprietary data (0 until the first update that changes something)
  * @property modifiedAt when an update last changed its proprietary data; `null` if never
  */
-@JvmRecord
 data class LocalDataHeader(val pokemonId: Long, val version: Long, val modifiedAt: Instant?)

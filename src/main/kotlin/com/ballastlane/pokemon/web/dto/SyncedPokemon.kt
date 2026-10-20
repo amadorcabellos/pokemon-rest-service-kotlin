@@ -6,5 +6,4 @@ import java.time.Instant
 /**
  * Result of synchronizing one pokemon into the local store.
  */
-@JvmRecord
 data class SyncedPokemon(val id: Int, val name: String, val outcome: SyncOutcome, val lastSyncedAt: Instant)

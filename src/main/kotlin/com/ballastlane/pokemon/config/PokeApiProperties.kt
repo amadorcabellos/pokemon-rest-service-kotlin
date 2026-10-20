@@ -11,10 +11,9 @@ import org.springframework.validation.annotation.Validated
  *
  * @property baseUrl required; nullable only so that a missing value fails validation with a clear message
  */
-@JvmRecord
 @Validated
 @ConfigurationProperties(prefix = "pokeapi")
-final data class PokeApiProperties(
+data class PokeApiProperties(
     @field:NotNull val baseUrl: URI? = null,
     val connectTimeout: Duration = Duration.ofSeconds(5),
     val readTimeout: Duration = Duration.ofSeconds(10),
