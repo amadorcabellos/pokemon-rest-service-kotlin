@@ -5,7 +5,7 @@ FROM eclipse-temurin:21-jdk AS build
 WORKDIR /workspace
 
 # Resolve dependencies first so they are cached between source changes.
-COPY gradlew settings.gradle build.gradle ./
+COPY gradlew settings.gradle.kts build.gradle.kts ./
 COPY gradle gradle
 RUN ./gradlew --no-daemon dependencies > /dev/null
 
