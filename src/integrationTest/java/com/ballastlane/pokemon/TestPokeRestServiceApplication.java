@@ -10,7 +10,7 @@ import org.springframework.boot.SpringApplication;
 public class TestPokeRestServiceApplication {
 
 	public static void main(String[] args) {
-		SpringApplication.from(PokeRestServiceApplication::main).with(ContainersConfiguration.class).run(args);
+		SpringApplication.from(PokeRestServiceApplicationKt::main).with(ContainersConfiguration.class).run(args);
 	}
 
 }
