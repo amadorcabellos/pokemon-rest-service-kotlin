@@ -1,5 +1,7 @@
 plugins {
-	java
+	kotlin("jvm") version "2.3.21"
+	kotlin("plugin.spring") version "2.3.21"
+	kotlin("plugin.jpa") version "2.3.21"
 	id("org.springframework.boot") version "4.1.1"
 	id("io.spring.dependency-management") version "1.1.7"
 }
@@ -8,14 +10,28 @@ group = "com.ballastlane"
 version = "0.0.1-SNAPSHOT"
 description = "REST API that integrates with PokeAPI, backed by PostgreSQL and Redis"
 
-java {
-	toolchain {
-		languageVersion = JavaLanguageVersion.of(21)
+kotlin {
+	jvmToolchain(21)
+	compilerOptions {
+		// Spring's null-safety annotations become real Kotlin types.
+		freeCompilerArgs.addAll("-Xjsr305=strict", "-Xannotation-default-target=param-property")
+		// Parameter names are needed by @Query named parameters, @Cacheable keys and validation messages.
+		javaParameters = true
 	}
+}
+
+// Hibernate subclasses entities for lazy proxies, so they must stay open (plugin.spring opens Spring beans).
+allOpen {
+	annotation("jakarta.persistence.Entity")
+	annotation("jakarta.persistence.MappedSuperclass")
+	annotation("jakarta.persistence.Embeddable")
 }
 
 val resilience4jVersion = "2.4.0"
 val springdocVersion = "3.1.1"
+val mockkVersion = "1.14.11"
+val springmockkVersion = "5.0.1"
+val kotestVersion = "6.2.6"
 
 repositories {
 	mavenCentral()
@@ -66,11 +82,16 @@ dependencies {
 	implementation("org.flywaydb:flyway-database-postgresql")
 	implementation("io.github.resilience4j:resilience4j-spring-boot4:$resilience4jVersion")
 	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:$springdocVersion")
+	implementation("org.jetbrains.kotlin:kotlin-reflect")
+	implementation("tools.jackson.module:jackson-module-kotlin")
 	runtimeOnly("org.postgresql:postgresql")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-restclient-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-security-test")
+	testImplementation("io.mockk:mockk:$mockkVersion")
+	testImplementation("com.ninja-squad:springmockk:$springmockkVersion")
+	testImplementation("io.kotest:kotest-assertions-core:$kotestVersion")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
 	integrationTestImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
