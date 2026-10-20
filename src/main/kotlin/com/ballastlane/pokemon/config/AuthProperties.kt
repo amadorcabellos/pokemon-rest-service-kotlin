@@ -1,5 +1,6 @@
 package com.ballastlane.pokemon.config
 
+import com.ballastlane.pokemon.text.isJavaBlank
 import jakarta.validation.Valid
 import jakarta.validation.constraints.Min
 import jakarta.validation.constraints.NotBlank
@@ -31,7 +32,7 @@ final data class AuthProperties(
 ) {
 
     init {
-        require(jwtSecret.isBlank() || jwtSecret.toByteArray().size >= MIN_SECRET_BYTES) {
+        require(jwtSecret.isJavaBlank() || jwtSecret.toByteArray().size >= MIN_SECRET_BYTES) {
             "app.security.jwt-secret (JWT_SECRET) must be at least $MIN_SECRET_BYTES bytes"
         }
     }
@@ -52,7 +53,7 @@ final data class AuthProperties(
     data class InitialAdmin(val username: String? = null, val password: String? = null) {
 
         val isConfigured: Boolean
-            get() = !username.isNullOrBlank() && !password.isNullOrEmpty()
+            get() = username != null && !username.isJavaBlank() && !password.isNullOrEmpty()
     }
 
     companion object {

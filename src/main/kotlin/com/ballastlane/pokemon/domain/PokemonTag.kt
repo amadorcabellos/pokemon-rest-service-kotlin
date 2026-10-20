@@ -1,5 +1,6 @@
 package com.ballastlane.pokemon.domain
 
+import com.ballastlane.pokemon.text.javaTrim
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.FetchType
@@ -32,7 +33,7 @@ class PokemonTag(
         protected set
 
     @Column(nullable = false, updatable = false)
-    val tag: String = tag.trim().lowercase(Locale.ROOT)
+    val tag: String = tag.javaTrim().lowercase(Locale.ROOT)
 
     @Column(name = "created_at", nullable = false, updatable = false)
     var createdAt: Instant? = null
