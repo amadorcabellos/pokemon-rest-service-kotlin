@@ -110,7 +110,7 @@ class PokemonRepositoryIntegrationTest {
 		entityManager.clear();
 
 		assertThat(repository.findByPokeApiId(25)).hasValueSatisfying(pokemon -> {
-			assertThat(pokemon.getStats()).extracting(PokemonStat::name).containsExactly("hp", "attack", "speed");
+			assertThat(pokemon.getStats()).extracting(PokemonStat::getName).containsExactly("hp", "attack", "speed");
 			assertThat(pokemon.getAbilities()).containsExactly(new PokemonAbility("static", false),
 					new PokemonAbility("lightning-rod", true));
 		});

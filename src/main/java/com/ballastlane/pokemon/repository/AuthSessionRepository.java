@@ -11,7 +11,7 @@ public interface AuthSessionRepository extends JpaRepository<AuthSession, UUID> 
 	/**
 	 * The session with its user and roles in one query: what every protected request checks.
 	 */
-	@Query("select s from AuthSession s join fetch s.user u left join fetch u.roles where s.id = :id")
+	@Query("select s from AuthSession s join fetch s.user u left join fetch u._roles where s.id = :id")
 	Optional<AuthSession> findWithUserById(UUID id);
 
 }
