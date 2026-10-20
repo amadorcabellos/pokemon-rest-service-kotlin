@@ -11,7 +11,7 @@ through a small auth API; updates need a `USER` access token and synchronization
 stays public. Calls to PokeAPI are protected by **Resilience4j** (retry, circuit breaker and rate limiter). The
 API is documented with **OpenAPI 3** and **Swagger UI**.
 
-Built with Java 21, Spring Boot 4.1 and Gradle 9.
+Built with Kotlin 2.3 on Java 21, Spring Boot 4.1 and Gradle 9.
 
 ---
 
@@ -237,7 +237,7 @@ POST /auth/logout   ──► session ended (LOGOUT) ──► its access and re
 
 | Concern            | Choice                                                         |
 |--------------------|----------------------------------------------------------------|
-| Language / runtime | Java 21 (virtual threads enabled)                              |
+| Language / runtime | Kotlin 2.3 on Java 21 (virtual threads enabled)                |
 | Framework          | Spring Boot 4.1 (Web MVC, Data JPA, Data Redis, Cache, Validation, Actuator) |
 | Security           | Spring Security 7 with the OAuth2 resource server (bearer JWTs, Nimbus, HS256), PBKDF2 password hashing |
 | HTTP client        | Spring `RestClient`                                            |
@@ -245,22 +245,38 @@ POST /auth/logout   ──► session ended (LOGOUT) ──► its access and re
 | API docs           | springdoc-openapi 3.1 (OpenAPI 3 + Swagger UI)                 |
 | Database           | PostgreSQL 17 + Flyway                                         |
 | Cache              | Redis 7 via Spring Cache abstraction                           |
-| Build              | Gradle 9 (wrapper included) with JVM Test Suites               |
-| Unit tests         | JUnit 5, Mockito, AssertJ, `@WebMvcTest`, `MockRestServiceServer` |
+| Build              | Gradle 9 Kotlin DSL (wrapper included) with JVM Test Suites    |
+| Unit tests         | JUnit 5, MockK (+ springmockk `@MockkBean`), Kotest assertions, `@WebMvcTest` with the Kotlin MockMvc DSL, `MockRestServiceServer` |
 | Integration tests  | Testcontainers (PostgreSQL, Redis, WireMock)                   |
 | Packaging          | Multi-stage Dockerfile (layered jar) + Docker Compose          |
+
+A few Kotlin details matter for how the code works:
+
+- **Compiler plugins.** `plugin.spring` opens Spring beans so caching, transactions and Resilience4j can proxy
+  them, and `allOpen` does the same for JPA entities (Hibernate subclasses them for lazy loading).
+  `plugin.jpa` gives entities the no-argument constructor JPA needs. `SessionJwtAuthenticationConverter` is
+  created by a `@Bean` method rather than a stereotype annotation, so it is declared `open` by hand.
+- **Compiler options.** `-Xjsr305=strict` turns Spring's null-safety annotations into Kotlin types,
+  `-Xannotation-default-target=param-property` puts annotations on constructor properties onto their fields
+  too, and `javaParameters` keeps parameter names for `@Query`, `@Cacheable` keys and validation messages.
+- **Request DTOs have nullable fields.** A missing field then reaches the service and comes back as a field
+  problem in `errors`, instead of failing JSON binding.
+- **Java string rules for user input.** Kotlin's `trim()` and `isBlank()` also treat no-break spaces as
+  whitespace, so usernames, tags and names use small helpers in `text/JavaStrings.kt` with Java's rules.
+- **Redis values** are read back with the Kotlin Jackson module (see `CacheConfig`), and springdoc's Kotlin
+  nullability markers are turned off in `application.yml` so the OpenAPI document matches the Java version.
 
 ## Project layout
 
 ```
 .
-├── build.gradle                     # dependencies, test suites, bootTestRun wiring
+├── build.gradle.kts                 # dependencies, Kotlin plugins, test suites, bootTestRun wiring
 ├── compose.yaml                     # postgres + redis + app
 ├── Dockerfile                       # multi-stage, layered, non-root image
 └── src
     ├── main
-    │   ├── java/com/ballastlane/pokemon
-    │   │   ├── PokeRestServiceApplication.java
+    │   ├── kotlin/com/ballastlane/pokemon
+    │   │   ├── PokeRestServiceApplication.kt
     │   │   ├── auth/                # registration, sign-in, tokens, sessions, login limiter, initial admin,
     │   │   │                        # and the OpenAPI security scheme name
     │   │   ├── client/              # PokeApiClient + PokeAPI DTOs
@@ -274,17 +290,18 @@ POST /auth/logout   ──► session ended (LOGOUT) ──► its access and re
     │   │   ├── repository/          # Spring Data JPA repositories
     │   │   ├── service/             # details + catalogue services and cached loaders
     │   │   ├── sync/                # PokeAPI → PostgreSQL synchronization (single and full runs)
+    │   │   ├── text/                # Java's whitespace rules for user input
     │   │   └── web/                 # controllers (OpenAPI-annotated) and DTOs
     │   └── resources
     │       ├── application.yml
     │       └── db/migration/        # Flyway scripts
     ├── test                         # unit tests (no Docker needed)
-    │   ├── java/...                 # Mockito / WebMvcTest / MockRestServiceServer
+    │   ├── kotlin/...               # MockK / WebMvcTest / MockRestServiceServer
     │   └── resources/pokeapi/       # PokeAPI JSON fixtures
     └── integrationTest              # integration tests (Docker required)
-        ├── java/com/ballastlane/pokemon
-        │   ├── TestPokeRestServiceApplication.java   # run app with Testcontainers
-        │   ├── support/             # shared containers + AbstractApiIntegrationTest base class
+        ├── kotlin/com/ballastlane/pokemon
+        │   ├── TestPokeRestServiceApplication.kt     # run app with Testcontainers
+        │   ├── support/             # shared containers, AbstractApiIntegrationTest base class, proxy check
         │   ├── auth/                # registration, sign-in, refresh, sign-out, expiry and lockout tests
         │   ├── catalog/             # catalogue browsing and caching tests
         │   ├── localdata/           # local data updates against PostgreSQL, Redis and syncs
@@ -893,16 +910,16 @@ Unit tests and integration tests are separate
 Reports are written to `build/reports/tests/test/index.html` and
 `build/reports/tests/integrationTest/index.html`.
 
-### Unit tests (Mockito)
+### Unit tests (MockK)
 
 | Test                   | What it covers                                                                       |
 |------------------------|--------------------------------------------------------------------------------------|
-| `PokemonDetailsServiceTest` | Builds the view from Pokémon, species and chain; uses the linked species for alternate forms; normalizes input; stores new Pokémon once, ignoring concurrent duplicates; single-stage fallback; 404 and failures propagate (`@Mock`, `@Spy`, `@InjectMocks`, BDD `given`/`verify`) |
+| `PokemonDetailsServiceTest` | Builds the view from Pokémon, species and chain; uses the linked species for alternate forms; normalizes input; stores new Pokémon once, ignoring concurrent duplicates; single-stage fallback; 404 and failures propagate (MockK `every`/`verify` with the real mappers) |
 | `PokemonDetailsMapperTest`  | Stats order and total, artwork → sprite → `null` fallback, most recent English description and cleaning, evolution summaries (level, item, trade, friendship, unknown, joined), linear/branching/single-stage chains, current stage |
 | `EvolutionChainLoaderTest`  | Fetches and maps a chain without a current stage, propagates client errors |
 | `PokemonCatalogServiceTest` | Page building from the catalogue listing, offset and metadata calculation, partial last page, past-the-end, offset overflow, whole page failing with the original exception |
 | `PokemonSummaryLoaderTest`  | Fetches by id, maps to a catalogue entry, propagates client errors |
-| `PokemonControllerTest`| `@WebMvcTest` slice with `@MockitoBean` services: details and page JSON shape, `localData` and `ETag` on the detailed view, default and custom paging, 400 for invalid paging (parameterized), 400/404/429/502/503 mapping |
+| `PokemonControllerTest`| `@WebMvcTest` slice with `@MockkBean` services: details and page JSON shape, `localData` and `ETag` on the detailed view, default and custom paging, 400 for invalid paging (parameterized), 400/404/429/502/503 mapping |
 | `PokemonLocalDataControllerTest` | `@WebMvcTest` slice for PUT and PATCH: `200` with `ETag`, merge-patch and plain JSON, `If-Match` passed on, every invalid field in `errors`, malformed and missing bodies, invalid path and `If-Match`, `404`, `412` with `currentVersion`, `415`, `405` with `Allow`, `413` |
 | `LocalDataRequestParserTest` | Normalisation (canonical locales, lowercase tags and kinds, blank notes), PUT needs every kind, PATCH keeps missing kinds and clears `null`, malformed bodies (empty, invalid, trailing content, not an object, duplicate keys, too deep), read-only and unknown fields, every rule with its field path, duplicates after normalisation, list sizes and types, repeated geo entries allowed |
 | `IfMatchTest`          | Strong comparison, lists, `*`, weak tags never match, malformed headers |
@@ -913,7 +930,7 @@ Reports are written to `build/reports/tests/test/index.html` and
 | `TokenServiceTest`     | Default lifetimes (15 minutes access, 7 days refresh) and configured ones, JWT claims (user, session, generation, roles), never outliving the session, unique refresh tokens, only their hash stored, nothing printed |
 | `AuthServiceTest`      | Registration (normalized, hashed, `USER` only, duplicates and concurrent duplicates), sign-in (same error for unknown and wrong, limiter, session lifetime), refresh (rotation, next generation, reuse ends the session, expired/unknown/ended rejected, maximum lifetime), sign-out (ends the session, any token accepted, reuse) |
 | `InitialAdminCreatorTest` | Creates the configured administrator, leaves an existing user alone, does nothing unless configured, refuses a password that breaks the policy |
-| `AuthControllerTest`   | `@WebMvcTest` with the real security rules: `201` + `Location` (roles in the body ignored), `400` with `errors`, `409`, sign-in `200`/`401`/`429` + `Retry-After`, refresh and sign-out without an access token, `/user` with and without a token |
+| `AuthControllerTest`   | `@WebMvcTest` with the real security rules: `201` + `Location` (roles in the body ignored), `400` with `errors` (including missing fields), `409`, sign-in `200`/`401`/`429` + `Retry-After`, refresh and sign-out without an access token, `/user` with and without a token |
 | `SecurityRulesTest`    | Real signed tokens against the real filter chain: every protected route gives `401` + `WWW-Authenticate` without a token and with a garbage, wrongly signed or expired one, before validation or any service; `403` without the role; `ADMIN` implies `USER`; ended sessions, older generations, deleted users and roles removed in the database are rejected; two `Authorization` headers; public routes ignore bad tokens; `405` unchanged; no cookies |
 | `PokeApiClientTest`    | `RestClient` against `MockRestServiceServer`: deserialization (abilities, stats, artwork, species link), species and evolution chain parsing, catalogue listing, 404 → `PokemonNotFoundException`, 5xx → `PokeApiException` |
 | `PokemonMapperTest`    | DTO → entity (types, stats, abilities, species) and catalogue entry mapping, type and ability ordering, hectograms → kilograms, null-safety |
@@ -924,10 +941,11 @@ Reports are written to `build/reports/tests/test/index.html` and
 | `ScheduledSyncTest`    | Disabled by default, starts a `SCHEDULED` run when enabled, skips when a run is already running |
 | `SyncRunRecoveryTest`  | Marks leftover `RUNNING` runs as interrupted on startup |
 | `SyncControllerTest`   | `@WebMvcTest` slice (signed in as `ADMIN`): `202` with `Location`, `409` with `runId`, run and latest run (`200`/`404`), single sync `200`/`400`/`404` |
+| `ConfigurationPropertiesBindingTest` | Every `@ConfigurationProperties` class binds its defaults and overrides (nested objects, lists, durations, sizes), an empty CORS list, and rejects a missing or short secret and out-of-range values |
 
 ### Integration tests (Testcontainers)
 
-Container setup lives in `src/integrationTest/java/.../support`:
+Container setup lives in `src/integrationTest/kotlin/.../support`:
 
 - `ContainersConfiguration` defines the `postgres:17-alpine` and `redis:7-alpine` containers, registered
   with `@ServiceConnection`. Spring Boot reads their connection details directly, so you don't need
@@ -961,6 +979,7 @@ recorded calls.
 | `AuthIntegrationTest`              | Register, sign in, update local data, read `/user`, `403` on synchronization and `401` without a token; duplicates (and concurrent duplicates) give `409`; roles in the body are ignored; wrong username and wrong password give identical bodies; refresh retires the old pair and reuse ends the session; concurrent refreshes let one through; sign-out needs only the refresh token and ends only that session; repeated failures give `429`; deleted users and removed roles take effect at once; refresh tokens stored as hashes, passwords as PBKDF2, and no password or token in the logs |
 | `AuthLifecycleIntegrationTest`     | With a movable clock: the access token expires after 15 minutes but can still be refreshed days later, and the refresh token after 7 days; refreshing keeps a session alive until its 30-day maximum lifetime; a lockout ends after 15 minutes; the initial administrator can sign in and run a full synchronization, and isn't changed when it exists |
 | `LocalDataIntegrationTest`         | (Signed in as `ADMIN`.) PUT then GET shows the data while the PokeAPI part still comes from Redis; PATCH changes only what it sends, `null` clears, a no-op keeps the version; repeated geo entries; invalid requests change nothing; a Pokémon not stored locally gives `404` without calling PokeAPI, and can be updated after a lookup; full and single syncs keep the data and its version; two updates with the same `If-Match` give one `200` and one `412`; concurrent updates without `If-Match` alongside a sync all succeed |
+| `SpringProxiesIntegrationTest`     | The beans with caching, transactions or resilience are Spring proxies (a final Kotlin class would silently lose them), and a local data update that fails partway leaves the database unchanged |
 | `PokemonSyncIntegrationTest`       | (Signed in as `ADMIN`.) A full sync of the 3-Pokémon WireMock catalogue stores every replicated field; a second run creates no duplicates; proprietary data survives full syncs, single syncs and lookups; a lookup-recorded row is completed, not duplicated; an upstream 404 gives `COMPLETED_WITH_ERRORS` with the failed name; a second start while running gives `409`; run status endpoints; single sync `200`/`404`/`400`. Runs are polled with Awaitility |
 
 To add a PokeAPI stub, put a mapping in `wiremock/mappings/` and, if needed, a body file in
